@@ -1,0 +1,22 @@
+{
+  "name": "thecultbot",
+  "version": "1.0.0",
+  "description": "Discord bot for managing a game roster and weekly polls",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "NODE_PATH=dist node dist/index.js",
+    "dev": "NODE_PATH=. tsx watch index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.0.0"
+  }
+}

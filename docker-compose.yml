@@ -1,0 +1,12 @@
+services:
+  cultbot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_PATH=/app/dist
+    volumes:
+      - data:/app/data
+
+volumes:
+  data:
