@@ -23,20 +23,23 @@ const command: CommandModule = {
                 .setRequired(true)
                 .setAutocomplete(true)))
         .addSubcommand(sub => sub
+            .setName('import')
+            .setDescription('Bulk add games from a comma-separated list')
+            .addStringOption(opt => opt
+                .setName('games')
+                .setDescription('Comma-separated list of game names')
+                .setRequired(true)))
+        .addSubcommand(sub => sub
             .setName('list')
             .setDescription('List all games in the roster')),
 
     async autocomplete(interaction: AutocompleteInteraction) {
-        const sub     = interaction.options.getSubcommand();
         const focused = interaction.options.getFocused().toLowerCase();
-
-        if (sub === 'remove') {
-            const matches = listGames()
-                .filter(g => g.name.toLowerCase().includes(focused))
-                .slice(0, 25)
-                .map(g => ({ name: g.name, value: g.name }));
-            await interaction.respond(matches);
-        }
+        const matches = listGames()
+            .filter(g => g.name.toLowerCase().includes(focused))
+            .slice(0, 25)
+            .map(g => ({ name: g.name, value: g.name }));
+        await interaction.respond(matches);
     },
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -58,9 +61,8 @@ const command: CommandModule = {
             return interaction.reply({ content: 'You need the manager role (or admin) to do that.', flags: MessageFlags.Ephemeral });
         }
 
-        const name = interaction.options.getString('name', true).trim();
-
         if (sub === 'add') {
+            const name = interaction.options.getString('name', true).trim();
             try {
                 addGame(name, interaction.user.username);
                 return interaction.reply({ content: `**${name}** added to the roster.` });
@@ -71,11 +73,39 @@ const command: CommandModule = {
         }
 
         if (sub === 'remove') {
+            const name    = interaction.options.getString('name', true).trim();
             const removed = removeGame(name);
             if (removed === 0) {
                 return interaction.reply({ content: `No game called **${name}** found in the roster.`, flags: MessageFlags.Ephemeral });
             }
             return interaction.reply({ content: `**${name}** removed from the roster.` });
+        }
+
+        if (sub === 'import') {
+            const input = interaction.options.getString('games', true);
+            const names = input.split(',').map(n => n.trim()).filter(n => n.length > 0);
+
+            if (names.length === 0) {
+                return interaction.reply({ content: 'No game names found. Separate names with commas.', flags: MessageFlags.Ephemeral });
+            }
+
+            const added:   string[] = [];
+            const skipped: string[] = [];
+
+            for (const name of names) {
+                try {
+                    addGame(name, interaction.user.username);
+                    added.push(name);
+                } catch {
+                    skipped.push(name);
+                }
+            }
+
+            const lines: string[] = [];
+            if (added.length)   lines.push(`**Added (${added.length}):** ${added.join(', ')}`);
+            if (skipped.length) lines.push(`**Skipped - already exists (${skipped.length}):** ${skipped.join(', ')}`);
+
+            return interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
         }
     },
 };
