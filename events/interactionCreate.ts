@@ -4,10 +4,19 @@ import type { EventModule, CommandModule } from 'types';
 const event: EventModule = {
     name: Events.InteractionCreate,
     async execute(interaction: Interaction) {
+        const commands = interaction.client.commands as import('discord.js').Collection<string, CommandModule>;
+
+        if (interaction.isAutocomplete()) {
+            const command = commands.get(interaction.commandName);
+            if (command?.autocomplete) {
+                await command.autocomplete(interaction).catch(console.error);
+            }
+            return;
+        }
+
         if (!interaction.isChatInputCommand()) return;
 
-        const commands = interaction.client.commands as import('discord.js').Collection<string, CommandModule>;
-        const command  = commands.get(interaction.commandName);
+        const command = commands.get(interaction.commandName);
         if (!command) return;
 
         try {
