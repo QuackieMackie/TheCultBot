@@ -43,6 +43,13 @@ const command: CommandModule = {
                 .setMaxValue(168)
                 .setRequired(true)))
         .addSubcommand(sub => sub
+            .setName('poll-auto')
+            .setDescription('Turn the automatic weekly poll on or off')
+            .addBooleanOption(opt => opt
+                .setName('enabled')
+                .setDescription('Whether the poll fires automatically each Monday')
+                .setRequired(true)))
+        .addSubcommand(sub => sub
             .setName('manager-role')
             .setDescription('Set the role that can manage the game roster')
             .addRoleOption(opt => opt
@@ -66,9 +73,11 @@ const command: CommandModule = {
             const size      = getConfig('poll_size');
             const hour      = getConfig('poll_hour_utc');
             const duration  = getConfig('poll_duration_hours');
+            const autoOn    = getConfig('poll_auto_enabled') === 'true';
             return interaction.reply({
                 content: [
                     '**Current Config**',
+                    `Automatic polls: ${autoOn ? 'Enabled' : 'Disabled'}`,
                     `Poll channel: ${channelId ? `<#${channelId}>` : '_not set_'}`,
                     `Manager role: ${roleId ? `<@&${roleId}>` : '_not set_'}`,
                     `Poll size: ${size} games`,
@@ -106,6 +115,17 @@ const command: CommandModule = {
             const hours = interaction.options.getInteger('hours', true);
             setConfig('poll_duration_hours', hours);
             return interaction.reply({ content: `Poll duration set to **${hours}** hours.`, flags: MessageFlags.Ephemeral });
+        }
+
+        if (sub === 'poll-auto') {
+            const enabled = interaction.options.getBoolean('enabled', true);
+            setConfig('poll_auto_enabled', enabled ? 'true' : 'false');
+            return interaction.reply({
+                content: enabled
+                    ? 'Automatic weekly polls are now **enabled**.'
+                    : 'Automatic weekly polls are now **disabled**. Use `/poll now` to post one manually.',
+                flags: MessageFlags.Ephemeral,
+            });
         }
 
         if (sub === 'manager-role') {

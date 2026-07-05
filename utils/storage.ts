@@ -12,6 +12,7 @@ const CONFIG_DEFAULTS: StoredConfig = {
     manager_role_id: '',
     poll_hour_utc:       '9',
     poll_duration_hours: '24',
+    poll_auto_enabled:   'true',
 };
 
 function readGames(): Game[] {

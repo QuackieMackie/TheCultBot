@@ -24,5 +24,6 @@ export interface StoredConfig {
     manager_role_id:     string;
     poll_hour_utc:       string;
     poll_duration_hours: string;
+    poll_auto_enabled:   string;
     [key: string]:       string;
 }
