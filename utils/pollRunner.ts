@@ -1,22 +1,40 @@
 import { Client } from 'discord.js';
 import { getConfig, getRandomGames, gameCount } from 'utils/storage';
 
-export async function runWeeklyPoll(client: Client): Promise<void> {
+export async function runWeeklyPoll(client: Client, gameNames?: string[]): Promise<void> {
     const channelId = getConfig('poll_channel_id');
     if (!channelId) {
         throw new Error('No poll channel configured. Use `/config poll-channel` to set one.');
     }
 
-    const total = gameCount();
-    if (total === 0) {
-        throw new Error('No games in the roster. Add some with `/game add`.');
-    }
+    let games: { name: string }[];
 
-    const count = Math.min(parseInt(getConfig('poll_size'), 10), total);
-    const games = getRandomGames(count).filter(g => g.name?.trim());
-
-    if (games.length === 0) {
-        throw new Error('No valid games found in the roster.');
+    if (gameNames && gameNames.length > 0) {
+        const seen = new Set<string>();
+        games = [];
+        for (const raw of gameNames) {
+            const name = raw?.trim();
+            if (!name) continue;
+            const key = name.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            games.push({ name });
+        }
+        games = games.slice(0, 10);
+        if (games.length === 0) {
+            throw new Error('No valid games were provided for the poll.');
+        }
+    } else {
+        // Default: random selection from the roster.
+        const total = gameCount();
+        if (total === 0) {
+            throw new Error('No games in the roster. Add some with `/game add`.');
+        }
+        const count = Math.min(parseInt(getConfig('poll_size'), 10), total);
+        games = getRandomGames(count).filter(g => g.name?.trim());
+        if (games.length === 0) {
+            throw new Error('No valid games found in the roster.');
+        }
     }
 
     const channel = await client.channels.fetch(channelId).catch(() => null);
