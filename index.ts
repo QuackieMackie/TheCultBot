@@ -15,7 +15,6 @@ declare module 'discord.js' {
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
 
-// Load commands
 const commandsPath = path.join(__dirname, 'commands');
 for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) {
     const command: CommandModule = require(path.join(commandsPath, file)).default;
@@ -24,7 +23,6 @@ for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) 
     }
 }
 
-// Load events
 const eventsPath = path.join(__dirname, 'events');
 for (const file of fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'))) {
     const event: EventModule = require(path.join(eventsPath, file)).default;

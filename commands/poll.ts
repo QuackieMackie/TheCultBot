@@ -31,7 +31,6 @@ const command: CommandModule = {
 
         const pick = interaction.options.getBoolean('pick') ?? false;
 
-        // Default behaviour: post a poll with a random selection from the roster.
         if (!pick) {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             try {
@@ -45,7 +44,6 @@ const command: CommandModule = {
             return;
         }
 
-        // Manual selection: present a multi-select menu of the roster.
         const roster = listGames().filter(g => g.name?.trim());
         if (roster.length === 0) {
             return interaction.reply({ content: 'The roster is empty. Add some games with `/game add` first.', flags: MessageFlags.Ephemeral });

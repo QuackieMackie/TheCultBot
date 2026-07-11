@@ -1,5 +1,5 @@
 import { Client } from 'discord.js';
-import { getConfig, getRandomGames, gameCount } from 'utils/storage';
+import { getConfig, getRandomGames, gameCount, MAX_GAME_NAME_LENGTH } from 'utils/storage';
 
 export async function runWeeklyPoll(client: Client, gameNames?: string[]): Promise<void> {
     const channelId = getConfig('poll_channel_id');
@@ -25,7 +25,6 @@ export async function runWeeklyPoll(client: Client, gameNames?: string[]): Promi
             throw new Error('No valid games were provided for the poll.');
         }
     } else {
-        // Default: random selection from the roster.
         const total = gameCount();
         if (total === 0) {
             throw new Error('No games in the roster. Add some with `/game add`.');
@@ -50,7 +49,7 @@ export async function runWeeklyPoll(client: Client, gameNames?: string[]): Promi
         content: 'Weekly Game Vote -- pick what we\'re playing this week!',
         poll: {
             question:         { text: 'Which game should we play this week?' },
-            answers:          games.map(g => ({ text: g.name })),
+            answers:          games.map(g => ({ text: g.name.slice(0, MAX_GAME_NAME_LENGTH) })),
             duration:         parseInt(getConfig('poll_duration_hours'), 10),
             allowMultiselect: true,
         },

@@ -2,9 +2,13 @@ import fs   from 'fs';
 import path from 'path';
 import type { Game, StoredConfig } from 'types';
 
-const DATA_DIR    = path.join(__dirname, '..', 'data');
+const DATA_DIR    = process.env.CULTBOT_DATA_DIR || path.join(__dirname, '..', 'data');
 const GAMES_FILE  = path.join(DATA_DIR, 'games.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+
+// Discord caps poll answer text at 55 characters, so a game name longer than
+// that would make the whole weekly poll fail to send.
+export const MAX_GAME_NAME_LENGTH = 55;
 
 const CONFIG_DEFAULTS: StoredConfig = {
     poll_size:       '5',
@@ -66,6 +70,13 @@ export function initStorage(): void {
 }
 
 export function addGame(name: string, addedBy: string): void {
+    name = name.trim();
+    if (!name) {
+        throw new Error('Game name cannot be empty.');
+    }
+    if (name.length > MAX_GAME_NAME_LENGTH) {
+        throw new Error(`"${name}" is too long (max ${MAX_GAME_NAME_LENGTH} characters).`);
+    }
     const games = readGames();
     if (games.some(g => g.name.toLowerCase() === name.toLowerCase())) {
         throw new Error(`"${name}" is already in the roster.`);

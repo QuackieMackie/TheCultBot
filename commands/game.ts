@@ -96,14 +96,15 @@ const command: CommandModule = {
                 try {
                     addGame(name, interaction.user.username);
                     added.push(name);
-                } catch {
-                    skipped.push(name);
+                } catch (err) {
+                    const reason = err instanceof Error ? err.message : 'could not be added';
+                    skipped.push(`${name} (${reason})`);
                 }
             }
 
             const lines: string[] = [];
             if (added.length)   lines.push(`**Added (${added.length}):** ${added.join(', ')}`);
-            if (skipped.length) lines.push(`**Skipped - already exists (${skipped.length}):** ${skipped.join(', ')}`);
+            if (skipped.length) lines.push(`**Skipped (${skipped.length}):** ${skipped.join(', ')}`);
 
             return interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
         }
