@@ -1,4 +1,5 @@
 import { Events, Client, REST, Routes } from 'discord.js';
+import { ensureBoardMessage } from 'utils/roleBoard';
 import type { EventModule, CommandModule } from 'types';
 
 const event: EventModule = {
@@ -6,6 +7,8 @@ const event: EventModule = {
     once: true,
     async execute(client: Client) {
         console.log(`Ready! Logged in as ${client.user?.tag}`);
+
+        await ensureBoardMessage(client).catch(err => console.error('Role board refresh failed:', err));
 
         if (!process.env.CLIENT_ID || !process.env.GUILD_ID) {
             console.warn('Missing CLIENT_ID or GUILD_ID in env -- skipping command sync.');

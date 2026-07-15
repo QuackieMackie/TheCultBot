@@ -2,6 +2,7 @@ import { SlashCommandBuilder, MessageFlags, ChatInputCommandInteraction, Client,
 import { getConfig, setConfig } from 'utils/storage';
 import { hasManagerAccess } from 'utils/permissions';
 import { restartScheduler } from 'utils/scheduler';
+import { ensureBoardMessage } from 'utils/roleBoard';
 import type { CommandModule } from 'types';
 
 const command: CommandModule = {
@@ -57,6 +58,13 @@ const command: CommandModule = {
                 .setDescription('Manager role')
                 .setRequired(true)))
         .addSubcommand(sub => sub
+            .setName('role-board-channel')
+            .setDescription('Set the channel where members self-assign game group roles')
+            .addChannelOption(opt => opt
+                .setName('channel')
+                .setDescription('Target channel')
+                .setRequired(true)))
+        .addSubcommand(sub => sub
             .setName('show')
             .setDescription('Show the current configuration')),
 
@@ -68,17 +76,19 @@ const command: CommandModule = {
         const sub = interaction.options.getSubcommand();
 
         if (sub === 'show') {
-            const channelId = getConfig('poll_channel_id');
-            const roleId    = getConfig('manager_role_id');
-            const size      = getConfig('poll_size');
-            const hour      = getConfig('poll_hour_utc');
-            const duration  = getConfig('poll_duration_hours');
-            const autoOn    = getConfig('poll_auto_enabled') === 'true';
+            const channelId  = getConfig('poll_channel_id');
+            const roleId     = getConfig('manager_role_id');
+            const size       = getConfig('poll_size');
+            const hour       = getConfig('poll_hour_utc');
+            const duration   = getConfig('poll_duration_hours');
+            const boardId    = getConfig('role_board_channel_id');
+            const autoOn     = getConfig('poll_auto_enabled') === 'true';
             return interaction.reply({
                 content: [
                     '**Current Config**',
                     `Automatic polls: ${autoOn ? 'Enabled' : 'Disabled'}`,
                     `Poll channel: ${channelId ? `<#${channelId}>` : '_not set_'}`,
+                    `Role board channel: ${boardId ? `<#${boardId}>` : '_not set_'}`,
                     `Manager role: ${roleId ? `<@&${roleId}>` : '_not set_'}`,
                     `Poll size: ${size} games`,
                     `Poll time: ${hour}:00 UTC every Monday`,
@@ -132,6 +142,25 @@ const command: CommandModule = {
             const role = interaction.options.getRole('role', true);
             setConfig('manager_role_id', role.id);
             return interaction.reply({ content: `Manager role set to ${role}.`, flags: MessageFlags.Ephemeral });
+        }
+
+        if (sub === 'role-board-channel') {
+            const channel = interaction.options.getChannel('channel', true);
+            const allowed = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
+            if (!allowed.includes(channel.type as ChannelType.GuildText)) {
+                return interaction.reply({ content: 'Please select a standard text channel.', flags: MessageFlags.Ephemeral });
+            }
+            setConfig('role_board_channel_id', channel.id);
+            setConfig('role_board_message_id', '');
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            try {
+                await ensureBoardMessage(client);
+                return interaction.editReply({ content: `Role board channel set to ${channel}. Board message posted.` });
+            } catch (err) {
+                console.error(err);
+                const message = err instanceof Error ? err.message : 'An error occurred.';
+                return interaction.editReply({ content: `Channel set, but posting the board message failed: ${message}` });
+            }
         }
     },
 };

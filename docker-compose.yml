@@ -2,11 +2,15 @@ services:
   cultbot:
     build: .
     restart: unless-stopped
-    env_file: .env
+    init: true
     environment:
-      - NODE_PATH=/app/dist
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
+      CLIENT_ID: ${CLIENT_ID:?set CLIENT_ID}
+      GUILD_ID: ${GUILD_ID:?set GUILD_ID}
     volumes:
-      - data:/app/data
-
-volumes:
-  data:
+      - /srv/containers/thecults/discord:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"

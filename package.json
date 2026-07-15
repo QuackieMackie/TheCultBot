@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Discord bot for managing a game roster and weekly polls",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "start": "NODE_PATH=dist node dist/index.js",

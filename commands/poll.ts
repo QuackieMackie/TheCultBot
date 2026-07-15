@@ -82,7 +82,7 @@ const command: CommandModule = {
 
         try {
             await selection.update({ content: 'Posting poll...', components: [] });
-            await runWeeklyPoll(client, selection.values);
+            await runWeeklyPoll(client, { gameNames: selection.values });
             await interaction.editReply({
                 content: `Poll posted with ${selection.values.length} game(s): ${selection.values.join(', ')}`,
             });

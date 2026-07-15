@@ -15,7 +15,7 @@ export function startScheduler(client: Client): void {
             return;
         }
         console.log('Cron fired: running weekly poll...');
-        runWeeklyPoll(client).catch(console.error);
+        runWeeklyPoll(client, { weighted: true }).catch(console.error);
     }, { timezone: 'UTC' });
 
     const state = getConfig('poll_auto_enabled') === 'true' ? 'enabled' : 'disabled';

@@ -1,10 +1,16 @@
 import { Events, Interaction, MessageFlags } from 'discord.js';
 import type { EventModule, CommandModule } from 'types';
+import { handleRoleBoardInteraction } from 'utils/roleBoard';
 
 const event: EventModule = {
     name: Events.InteractionCreate,
     async execute(interaction: Interaction) {
         const commands = interaction.client.commands as import('discord.js').Collection<string, CommandModule>;
+
+        if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('roleboard:')) {
+            await handleRoleBoardInteraction(interaction).catch(console.error);
+            return;
+        }
 
         if (interaction.isAutocomplete()) {
             const command = commands.get(interaction.commandName);

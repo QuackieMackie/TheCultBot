@@ -1,27 +1,46 @@
 import fs   from 'fs';
 import path from 'path';
-import type { Game, StoredConfig } from 'types';
+import type { Game, Group, StoredConfig } from 'types';
 
-const DATA_DIR    = process.env.CULTBOT_DATA_DIR || path.join(__dirname, '..', 'data');
+export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.join(__dirname, '..', 'data');
 const GAMES_FILE  = path.join(DATA_DIR, 'games.json');
+const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
 // Discord caps poll answer text at 55 characters, so a game name longer than
-// that would make the whole weekly poll fail to send.
 export const MAX_GAME_NAME_LENGTH = 55;
+
+// Never-polled games get this pseudo "weeks since last poll" so they are the most
+// likely to be featured; recently featured games decay towards a weight of 1.
+const WEIGHT_CAP = 8;
 
 const CONFIG_DEFAULTS: StoredConfig = {
     poll_size:       '5',
     poll_channel_id: '',
     manager_role_id: '',
-    poll_hour_utc:       '9',
-    poll_duration_hours: '24',
-    poll_auto_enabled:   'true',
+    poll_hour_utc:         '9',
+    poll_duration_hours:   '24',
+    poll_auto_enabled:     'true',
+    role_board_channel_id: '',
+    role_board_message_id: '',
 };
+
+function normaliseGame(raw: Partial<Game>): Game {
+    return {
+        name:            raw.name ?? '',
+        addedBy:         raw.addedBy ?? '',
+        addedAt:         raw.addedAt ?? new Date(0).toISOString(),
+        group:           raw.group ?? '',
+        playerCount:     typeof raw.playerCount === 'number' ? raw.playerCount : 1,
+        lastPolledAt:    raw.lastPolledAt,
+        pollAppearances: typeof raw.pollAppearances === 'number' ? raw.pollAppearances : 0,
+    };
+}
 
 function readGames(): Game[] {
     try {
-        return JSON.parse(fs.readFileSync(GAMES_FILE, 'utf8')) as Game[];
+        const raw = JSON.parse(fs.readFileSync(GAMES_FILE, 'utf8')) as Partial<Game>[];
+        return raw.map(normaliseGame);
     } catch {
         console.error('games.json is missing or corrupted. Resetting to empty list.');
         writeGames([]);
@@ -31,6 +50,35 @@ function readGames(): Game[] {
 
 function writeGames(games: Game[]): void {
     fs.writeFileSync(GAMES_FILE, JSON.stringify(games, null, 2));
+}
+
+function normaliseGroup(raw: Partial<Group>): Group {
+    return {
+        name:           raw.name ?? '',
+        roleId:         raw.roleId ?? '',
+        roleName:       raw.roleName ?? '',
+        roleColour:     raw.roleColour ?? '',
+        categoryId:     raw.categoryId ?? '',
+        textChannelId:  raw.textChannelId ?? '',
+        voiceChannelId: raw.voiceChannelId ?? '',
+        quarantined:    raw.quarantined ?? false,
+        quarantinedAt:  raw.quarantinedAt,
+    };
+}
+
+function readGroups(): Group[] {
+    try {
+        const raw = JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8')) as Partial<Group>[];
+        return raw.map(normaliseGroup);
+    } catch {
+        console.error('groups.json is missing or corrupted. Resetting to empty list.');
+        writeGroups([]);
+        return [];
+    }
+}
+
+function writeGroups(groups: Group[]): void {
+    fs.writeFileSync(GROUPS_FILE, JSON.stringify(groups, null, 2));
 }
 
 function readConfig(): StoredConfig {
@@ -55,6 +103,10 @@ export function initStorage(): void {
         writeGames([]);
     }
 
+    if (!fs.existsSync(GROUPS_FILE)) {
+        writeGroups([]);
+    }
+
     if (!fs.existsSync(CONFIG_FILE)) {
         writeConfig({ ...CONFIG_DEFAULTS });
     } else {
@@ -69,24 +121,36 @@ export function initStorage(): void {
     console.log('Storage initialised.');
 }
 
-export function addGame(name: string, addedBy: string): void {
-    name = name.trim();
-    if (!name) {
+// Throws if the name is empty, too long, or already taken. Call before touching Discord.
+export function validateGameName(name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) {
         throw new Error('Game name cannot be empty.');
     }
-    if (name.length > MAX_GAME_NAME_LENGTH) {
-        throw new Error(`"${name}" is too long (max ${MAX_GAME_NAME_LENGTH} characters).`);
+    if (trimmed.length > MAX_GAME_NAME_LENGTH) {
+        throw new Error(`"${trimmed}" is too long (max ${MAX_GAME_NAME_LENGTH} characters).`);
     }
+    if (readGames().some(g => g.name.toLowerCase() === trimmed.toLowerCase())) {
+        throw new Error(`"${trimmed}" is already in the roster.`);
+    }
+}
+
+export function saveNewGame(game: Game): void {
     const games = readGames();
-    if (games.some(g => g.name.toLowerCase() === name.toLowerCase())) {
-        throw new Error(`"${name}" is already in the roster.`);
-    }
-    games.push({ name, addedBy, addedAt: new Date().toISOString() });
+    games.push(game);
     games.sort((a, b) => a.name.localeCompare(b.name));
     writeGames(games);
 }
 
-export function removeGame(name: string): number {
+export function updateGame(name: string, patch: Partial<Game>): void {
+    const games = readGames();
+    const game  = games.find(g => g.name.toLowerCase() === name.toLowerCase());
+    if (!game) return;
+    Object.assign(game, patch);
+    writeGames(games);
+}
+
+export function deleteGame(name: string): number {
     const games    = readGames();
     const filtered = games.filter(g => g.name.toLowerCase() !== name.toLowerCase());
     const removed  = games.length - filtered.length;
@@ -94,8 +158,22 @@ export function removeGame(name: string): number {
     return removed;
 }
 
+export function getGameByName(name: string): Game | undefined {
+    return readGames().find(g => g.name.toLowerCase() === name.toLowerCase());
+}
+
+export function getGamesInGroup(groupName: string): Game[] {
+    return readGames().filter(g => g.group.toLowerCase() === groupName.toLowerCase());
+}
+
 export function listGames(): Game[] {
     return readGames();
+}
+
+// Games whose owning group still exists and is not quarantined.
+export function getActiveGames(): Game[] {
+    const active = new Set(getActiveGroups().map(g => g.name.toLowerCase()));
+    return readGames().filter(g => active.has(g.group.toLowerCase()));
 }
 
 export function getRandomGames(n: number): Game[] {
@@ -107,8 +185,62 @@ export function getRandomGames(n: number): Game[] {
     return games.slice(0, n);
 }
 
+// Weighted random selection without replacement. Weight = weeks since the game last
+// appeared in an auto poll (never-polled games get WEIGHT_CAP), so recently featured
+// games are unlikely and un-featured games rise back to the top over time.
+export function pickWeightedGames(pool: Game[], n: number): Game[] {
+    const now       = Date.now();
+    const remaining = pool.map(game => ({ game, weight: pollWeight(game, now) }));
+    const picked:   Game[] = [];
+
+    while (picked.length < n && remaining.length > 0) {
+        const total = remaining.reduce((sum, e) => sum + e.weight, 0);
+        let   roll  = Math.random() * total;
+        let   idx   = remaining.length - 1;
+        for (let i = 0; i < remaining.length; i++) {
+            roll -= remaining[i].weight;
+            if (roll <= 0) { idx = i; break; }
+        }
+        picked.push(remaining[idx].game);
+        remaining.splice(idx, 1);
+    }
+
+    return picked;
+}
+
+function pollWeight(game: Game, now: number): number {
+    if (!game.lastPolledAt) return WEIGHT_CAP;
+    const weeks = Math.floor((now - new Date(game.lastPolledAt).getTime()) / (7 * 24 * 60 * 60 * 1000));
+    return Math.min(Math.max(weeks, 1), WEIGHT_CAP);
+}
+
 export function gameCount(): number {
     return readGames().length;
+}
+
+export function getGroupByName(name: string): Group | undefined {
+    return readGroups().find(g => g.name.toLowerCase() === name.toLowerCase());
+}
+
+export function getActiveGroups(): Group[] {
+    return readGroups().filter(g => !g.quarantined);
+}
+
+export function saveGroup(group: Group): void {
+    const groups = readGroups();
+    const idx    = groups.findIndex(g => g.name.toLowerCase() === group.name.toLowerCase());
+    if (idx >= 0) groups[idx] = group;
+    else          groups.push(group);
+    groups.sort((a, b) => a.name.localeCompare(b.name));
+    writeGroups(groups);
+}
+
+export function updateGroup(name: string, patch: Partial<Group>): void {
+    const groups = readGroups();
+    const group  = groups.find(g => g.name.toLowerCase() === name.toLowerCase());
+    if (!group) return;
+    Object.assign(group, patch);
+    writeGroups(groups);
 }
 
 export function getConfig(key: string): string {

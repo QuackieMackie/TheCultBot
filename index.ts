@@ -4,6 +4,7 @@ import fs   from 'fs';
 import path from 'path';
 import { initStorage } from 'utils/storage';
 import { startScheduler } from 'utils/scheduler';
+import { startHeartbeat } from 'utils/health';
 import type { CommandModule, EventModule } from 'types';
 
 declare module 'discord.js' {
@@ -12,7 +13,7 @@ declare module 'discord.js' {
     }
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 client.commands = new Collection();
 
 const commandsPath = path.join(__dirname, 'commands');
@@ -35,4 +36,14 @@ for (const file of fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'))) {
 
 initStorage();
 startScheduler(client);
+startHeartbeat(client);
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+        console.log(`Received ${signal}, shutting down...`);
+        client.destroy();
+        process.exit(0);
+    });
+}
+
 client.login(process.env.DISCORD_TOKEN).catch(console.error);
