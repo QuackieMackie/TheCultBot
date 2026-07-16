@@ -60,8 +60,9 @@ const command: CommandModule = {
             .setDescription('List all games in the roster')),
 
     async autocomplete(interaction: AutocompleteInteraction) {
+        if (!interaction.guildId) return interaction.respond([]);
         const focused = interaction.options.getFocused().toLowerCase();
-        const matches = getActiveGames()
+        const matches = getActiveGames(interaction.guildId)
             .filter(g => g.name.toLowerCase().includes(focused))
             .slice(0, 25)
             .map(g => ({ name: g.name, value: g.name }));
@@ -69,6 +70,10 @@ const command: CommandModule = {
     },
 
     async execute(interaction: ChatInputCommandInteraction) {
+        if (!interaction.guildId) {
+            return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+        }
+
         const sub = interaction.options.getSubcommand();
 
         if (sub === 'list') {
@@ -85,7 +90,7 @@ const command: CommandModule = {
 };
 
 function handleList(interaction: ChatInputCommandInteraction) {
-    const games = getActiveGames();
+    const games = getActiveGames(interaction.guildId!);
     if (games.length === 0) {
         return interaction.reply({ content: 'The roster is empty. Add some games with `/game add`.', flags: MessageFlags.Ephemeral });
     }
@@ -111,12 +116,13 @@ function handleList(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleAdd(interaction: ChatInputCommandInteraction) {
+    const guildId     = interaction.guildId!;
     const name        = interaction.options.getString('name', true).trim();
     const groupName   = interaction.options.getString('group', true).trim();
     const playerCount = interaction.options.getInteger('player-count', true);
 
     try {
-        validateGameName(name);
+        validateGameName(guildId, name);
     } catch (err) {
         return interaction.reply({ content: err instanceof Error ? err.message : 'An error occurred.', flags: MessageFlags.Ephemeral });
     }
@@ -127,11 +133,11 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     }
 
     const record: Game = { name, addedBy: interaction.user.username, addedAt: new Date().toISOString(), group: groupName, playerCount, pollAppearances: 0 };
-    const existing     = getGroupByName(groupName);
+    const existing     = getGroupByName(guildId, groupName);
 
     if (existing && !existing.quarantined) {
         record.group = existing.name;
-        saveNewGame(record);
+        saveNewGame(guildId, record);
         return interaction.reply({ content: `**${name}** added to the existing **${existing.name}** group (joins <@&${existing.roleId}>). Resource options were ignored.` });
     }
 
@@ -140,9 +146,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
     try {
         if (existing && existing.quarantined) {
             const roleId = await reviveGroupResources(guild, existing);
-            updateGroup(existing.name, { roleId, quarantined: false, quarantinedAt: undefined });
+            updateGroup(guildId, existing.name, { roleId, quarantined: false, quarantinedAt: undefined });
             record.group = existing.name;
-            saveNewGame(record);
+            saveNewGame(guildId, record);
             return interaction.editReply({ content: `**${name}** added and the **${existing.name}** group was revived (role <@&${roleId}> re-created, channels restored).` });
         }
 
@@ -163,9 +169,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
         }
 
         const group = await createGroupResources(guild, { groupName, roleName, colour, textName, voiceName });
-        saveGroup(group);
+        saveGroup(guildId, group);
         record.group = group.name;
-        saveNewGame(record);
+        saveNewGame(guildId, record);
 
         return interaction.editReply({
             content: `**${name}** added. Created group **${group.name}** with role <@&${group.roleId}>, <#${group.textChannelId}> and voice channel.`,
@@ -178,8 +184,9 @@ async function handleAdd(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleRemove(interaction: ChatInputCommandInteraction) {
-    const name = interaction.options.getString('name', true).trim();
-    const game = getGameByName(name);
+    const guildId = interaction.guildId!;
+    const name    = interaction.options.getString('name', true).trim();
+    const game    = getGameByName(guildId, name);
 
     if (!game) {
         return interaction.reply({ content: `No game called **${name}** found in the roster.`, flags: MessageFlags.Ephemeral });
@@ -191,18 +198,18 @@ async function handleRemove(interaction: ChatInputCommandInteraction) {
     }
 
     await interaction.deferReply();
-    deleteGame(game.name);
+    deleteGame(guildId, game.name);
 
-    const remaining = getGamesInGroup(game.group);
+    const remaining = getGamesInGroup(guildId, game.group);
     if (remaining.length > 0) {
         return interaction.editReply({ content: `**${game.name}** removed. The **${game.group}** group stays active (${remaining.length} game(s) left).` });
     }
 
-    const group = getGroupByName(game.group);
+    const group = getGroupByName(guildId, game.group);
     if (group && !group.quarantined) {
         try {
             await quarantineGroupResources(guild, group);
-            updateGroup(group.name, { quarantined: true, quarantinedAt: new Date().toISOString(), roleId: '' });
+            updateGroup(guildId, group.name, { quarantined: true, quarantinedAt: new Date().toISOString(), roleId: '' });
             return interaction.editReply({ content: `**${game.name}** removed. The **${group.name}** group had no games left, so its channels were quarantined and the role deleted.` });
         } catch (err) {
             console.error(err);

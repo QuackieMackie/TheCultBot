@@ -6,23 +6,20 @@ import { runWeeklyPoll } from 'utils/pollRunner';
 let task: ScheduledTask | null = null;
 
 export function startScheduler(client: Client): void {
-    const hour       = getConfig('poll_hour_utc') || '9';
-    const expression = `0 ${hour} * * 1`;
-
-    task = cron.schedule(expression, () => {
-        if (getConfig('poll_auto_enabled') !== 'true') {
-            console.log('Cron fired but automatic polls are disabled. Skipping.');
-            return;
+    task = cron.schedule('0 * * * 1', () => {
+        const hour = new Date().getUTCHours();
+        for (const guildId of client.guilds.cache.keys()) {
+            if (getConfig(guildId, 'poll_auto_enabled') !== 'true') continue;
+            if ((parseInt(getConfig(guildId, 'poll_hour_utc'), 10) || 9) !== hour) continue;
+            console.log(`Cron fired: running weekly poll for guild ${guildId}...`);
+            runWeeklyPoll(client, guildId, { weighted: true }).catch(console.error);
         }
-        console.log('Cron fired: running weekly poll...');
-        runWeeklyPoll(client, { weighted: true }).catch(console.error);
     }, { timezone: 'UTC' });
 
-    const state = getConfig('poll_auto_enabled') === 'true' ? 'enabled' : 'disabled';
-    console.log(`Scheduler started, weekly poll at ${hour}:00 UTC every Monday (automatic polls ${state}).`);
+    console.log('Scheduler started, checking hourly on Mondays (UTC) for guilds due a poll.');
 }
 
-export function restartScheduler(client: Client): void {
+export function stopScheduler(): void {
     if (task) task.stop();
-    startScheduler(client);
+    task = null;
 }

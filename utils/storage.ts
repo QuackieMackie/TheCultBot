@@ -3,9 +3,6 @@ import path from 'path';
 import type { Game, Group, StoredConfig } from 'types';
 
 export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.join(__dirname, '..', 'data');
-const GAMES_FILE  = path.join(DATA_DIR, 'games.json');
-const GROUPS_FILE = path.join(DATA_DIR, 'groups.json');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
 // Discord caps poll answer text at 55 characters, so a game name longer than
 export const MAX_GAME_NAME_LENGTH = 55;
@@ -25,6 +22,22 @@ const CONFIG_DEFAULTS: StoredConfig = {
     role_board_message_id: '',
 };
 
+function guildDir(guildId: string): string {
+    return path.join(DATA_DIR, guildId);
+}
+
+function gamesFile(guildId: string): string {
+    return path.join(guildDir(guildId), 'games.json');
+}
+
+function groupsFile(guildId: string): string {
+    return path.join(guildDir(guildId), 'groups.json');
+}
+
+function configFile(guildId: string): string {
+    return path.join(guildDir(guildId), 'config.json');
+}
+
 function normaliseGame(raw: Partial<Game>): Game {
     return {
         name:            raw.name ?? '',
@@ -37,19 +50,19 @@ function normaliseGame(raw: Partial<Game>): Game {
     };
 }
 
-function readGames(): Game[] {
+function readGames(guildId: string): Game[] {
     try {
-        const raw = JSON.parse(fs.readFileSync(GAMES_FILE, 'utf8')) as Partial<Game>[];
+        const raw = JSON.parse(fs.readFileSync(gamesFile(guildId), 'utf8')) as Partial<Game>[];
         return raw.map(normaliseGame);
     } catch {
-        console.error('games.json is missing or corrupted. Resetting to empty list.');
-        writeGames([]);
+        console.error(`games.json for guild ${guildId} is missing or corrupted. Resetting to empty list.`);
+        writeGames(guildId, []);
         return [];
     }
 }
 
-function writeGames(games: Game[]): void {
-    fs.writeFileSync(GAMES_FILE, JSON.stringify(games, null, 2));
+function writeGames(guildId: string, games: Game[]): void {
+    fs.writeFileSync(gamesFile(guildId), JSON.stringify(games, null, 2));
 }
 
 function normaliseGroup(raw: Partial<Group>): Group {
@@ -66,63 +79,74 @@ function normaliseGroup(raw: Partial<Group>): Group {
     };
 }
 
-function readGroups(): Group[] {
+function readGroups(guildId: string): Group[] {
     try {
-        const raw = JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8')) as Partial<Group>[];
+        const raw = JSON.parse(fs.readFileSync(groupsFile(guildId), 'utf8')) as Partial<Group>[];
         return raw.map(normaliseGroup);
     } catch {
-        console.error('groups.json is missing or corrupted. Resetting to empty list.');
-        writeGroups([]);
+        console.error(`groups.json for guild ${guildId} is missing or corrupted. Resetting to empty list.`);
+        writeGroups(guildId, []);
         return [];
     }
 }
 
-function writeGroups(groups: Group[]): void {
-    fs.writeFileSync(GROUPS_FILE, JSON.stringify(groups, null, 2));
+function writeGroups(guildId: string, groups: Group[]): void {
+    fs.writeFileSync(groupsFile(guildId), JSON.stringify(groups, null, 2));
 }
 
-function readConfig(): StoredConfig {
+function readConfig(guildId: string): StoredConfig {
     try {
-        return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) as StoredConfig;
+        return JSON.parse(fs.readFileSync(configFile(guildId), 'utf8')) as StoredConfig;
     } catch {
-        console.error('config.json is missing or corrupted. Resetting to defaults.');
+        console.error(`config.json for guild ${guildId} is missing or corrupted. Resetting to defaults.`);
         const defaults = { ...CONFIG_DEFAULTS };
-        writeConfig(defaults);
+        writeConfig(guildId, defaults);
         return defaults;
     }
 }
 
-function writeConfig(config: StoredConfig): void {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+function writeConfig(guildId: string, config: StoredConfig): void {
+    fs.writeFileSync(configFile(guildId), JSON.stringify(config, null, 2));
 }
 
+// Ensures the top-level data directory exists. Call once at boot before init-ing guilds.
 export function initStorage(): void {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log('Storage initialised.');
+}
 
-    if (!fs.existsSync(GAMES_FILE)) {
-        writeGames([]);
+// Seeds a guild's data directory: empty games/groups and a default config.
+// Back-fills newly added default keys into an existing config. Safe to re-run.
+export function initGuildStorage(guildId: string): void {
+    fs.mkdirSync(guildDir(guildId), { recursive: true });
+
+    if (!fs.existsSync(gamesFile(guildId))) {
+        writeGames(guildId, []);
     }
 
-    if (!fs.existsSync(GROUPS_FILE)) {
-        writeGroups([]);
+    if (!fs.existsSync(groupsFile(guildId))) {
+        writeGroups(guildId, []);
     }
 
-    if (!fs.existsSync(CONFIG_FILE)) {
-        writeConfig({ ...CONFIG_DEFAULTS });
+    if (!fs.existsSync(configFile(guildId))) {
+        writeConfig(guildId, { ...CONFIG_DEFAULTS });
     } else {
-        const config  = readConfig();
+        const config  = readConfig(guildId);
         let   changed = false;
         for (const [k, v] of Object.entries(CONFIG_DEFAULTS)) {
             if (!(k in config)) { config[k] = v; changed = true; }
         }
-        if (changed) writeConfig(config);
+        if (changed) writeConfig(guildId, config);
     }
+}
 
-    console.log('Storage initialised.');
+// Removes a guild's entire data directory. Called when the bot is kicked/leaves.
+export function purgeGuildStorage(guildId: string): void {
+    fs.rmSync(guildDir(guildId), { recursive: true, force: true });
 }
 
 // Throws if the name is empty, too long, or already taken. Call before touching Discord.
-export function validateGameName(name: string): void {
+export function validateGameName(guildId: string, name: string): void {
     const trimmed = name.trim();
     if (!trimmed) {
         throw new Error('Game name cannot be empty.');
@@ -130,54 +154,54 @@ export function validateGameName(name: string): void {
     if (trimmed.length > MAX_GAME_NAME_LENGTH) {
         throw new Error(`"${trimmed}" is too long (max ${MAX_GAME_NAME_LENGTH} characters).`);
     }
-    if (readGames().some(g => g.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (readGames(guildId).some(g => g.name.toLowerCase() === trimmed.toLowerCase())) {
         throw new Error(`"${trimmed}" is already in the roster.`);
     }
 }
 
-export function saveNewGame(game: Game): void {
-    const games = readGames();
+export function saveNewGame(guildId: string, game: Game): void {
+    const games = readGames(guildId);
     games.push(game);
     games.sort((a, b) => a.name.localeCompare(b.name));
-    writeGames(games);
+    writeGames(guildId, games);
 }
 
-export function updateGame(name: string, patch: Partial<Game>): void {
-    const games = readGames();
+export function updateGame(guildId: string, name: string, patch: Partial<Game>): void {
+    const games = readGames(guildId);
     const game  = games.find(g => g.name.toLowerCase() === name.toLowerCase());
     if (!game) return;
     Object.assign(game, patch);
-    writeGames(games);
+    writeGames(guildId, games);
 }
 
-export function deleteGame(name: string): number {
-    const games    = readGames();
+export function deleteGame(guildId: string, name: string): number {
+    const games    = readGames(guildId);
     const filtered = games.filter(g => g.name.toLowerCase() !== name.toLowerCase());
     const removed  = games.length - filtered.length;
-    if (removed > 0) writeGames(filtered);
+    if (removed > 0) writeGames(guildId, filtered);
     return removed;
 }
 
-export function getGameByName(name: string): Game | undefined {
-    return readGames().find(g => g.name.toLowerCase() === name.toLowerCase());
+export function getGameByName(guildId: string, name: string): Game | undefined {
+    return readGames(guildId).find(g => g.name.toLowerCase() === name.toLowerCase());
 }
 
-export function getGamesInGroup(groupName: string): Game[] {
-    return readGames().filter(g => g.group.toLowerCase() === groupName.toLowerCase());
+export function getGamesInGroup(guildId: string, groupName: string): Game[] {
+    return readGames(guildId).filter(g => g.group.toLowerCase() === groupName.toLowerCase());
 }
 
-export function listGames(): Game[] {
-    return readGames();
+export function listGames(guildId: string): Game[] {
+    return readGames(guildId);
 }
 
 // Games whose owning group still exists and is not quarantined.
-export function getActiveGames(): Game[] {
-    const active = new Set(getActiveGroups().map(g => g.name.toLowerCase()));
-    return readGames().filter(g => active.has(g.group.toLowerCase()));
+export function getActiveGames(guildId: string): Game[] {
+    const active = new Set(getActiveGroups(guildId).map(g => g.name.toLowerCase()));
+    return readGames(guildId).filter(g => active.has(g.group.toLowerCase()));
 }
 
-export function getRandomGames(n: number): Game[] {
-    const games = [...readGames()];
+export function getRandomGames(guildId: string, n: number): Game[] {
+    const games = [...readGames(guildId)];
     for (let i = games.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [games[i], games[j]] = [games[j], games[i]];
@@ -214,42 +238,42 @@ function pollWeight(game: Game, now: number): number {
     return Math.min(Math.max(weeks, 1), WEIGHT_CAP);
 }
 
-export function gameCount(): number {
-    return readGames().length;
+export function gameCount(guildId: string): number {
+    return readGames(guildId).length;
 }
 
-export function getGroupByName(name: string): Group | undefined {
-    return readGroups().find(g => g.name.toLowerCase() === name.toLowerCase());
+export function getGroupByName(guildId: string, name: string): Group | undefined {
+    return readGroups(guildId).find(g => g.name.toLowerCase() === name.toLowerCase());
 }
 
-export function getActiveGroups(): Group[] {
-    return readGroups().filter(g => !g.quarantined);
+export function getActiveGroups(guildId: string): Group[] {
+    return readGroups(guildId).filter(g => !g.quarantined);
 }
 
-export function saveGroup(group: Group): void {
-    const groups = readGroups();
+export function saveGroup(guildId: string, group: Group): void {
+    const groups = readGroups(guildId);
     const idx    = groups.findIndex(g => g.name.toLowerCase() === group.name.toLowerCase());
     if (idx >= 0) groups[idx] = group;
     else          groups.push(group);
     groups.sort((a, b) => a.name.localeCompare(b.name));
-    writeGroups(groups);
+    writeGroups(guildId, groups);
 }
 
-export function updateGroup(name: string, patch: Partial<Group>): void {
-    const groups = readGroups();
+export function updateGroup(guildId: string, name: string, patch: Partial<Group>): void {
+    const groups = readGroups(guildId);
     const group  = groups.find(g => g.name.toLowerCase() === name.toLowerCase());
     if (!group) return;
     Object.assign(group, patch);
-    writeGroups(groups);
+    writeGroups(guildId, groups);
 }
 
-export function getConfig(key: string): string {
-    const config = readConfig();
+export function getConfig(guildId: string, key: string): string {
+    const config = readConfig(guildId);
     return key in config ? config[key] : (CONFIG_DEFAULTS[key] ?? '');
 }
 
-export function setConfig(key: string, value: string | number): void {
-    const config = readConfig();
+export function setConfig(guildId: string, key: string, value: string | number): void {
+    const config = readConfig(guildId);
     config[key]  = String(value);
-    writeConfig(config);
+    writeConfig(guildId, config);
 }

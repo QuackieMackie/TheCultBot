@@ -13,10 +13,19 @@ import { getConfig, setConfig, getActiveGroups } from 'utils/storage';
 
 const GROUPS_PER_PAGE = 25;
 
-// Posts (or updates) the persistent board message: a single button that opens each
-// member's private, paginated group menu. Safe to call repeatedly.
+// Refreshes the persistent board message for every guild the bot is in. Safe to
+// call repeatedly (e.g. on ready).
 export async function ensureBoardMessage(client: Client): Promise<void> {
-    const channelId = getConfig('role_board_channel_id');
+    for (const guildId of client.guilds.cache.keys()) {
+        await ensureBoardMessageForGuild(client, guildId).catch(err =>
+            console.error(`Role board refresh failed for guild ${guildId}:`, err));
+    }
+}
+
+// Posts (or updates) one guild's persistent board message: a single button that
+// opens each member's private, paginated group menu. Safe to call repeatedly.
+export async function ensureBoardMessageForGuild(client: Client, guildId: string): Promise<void> {
+    const channelId = getConfig(guildId, 'role_board_channel_id');
     if (!channelId) return;
 
     const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -29,7 +38,7 @@ export async function ensureBoardMessage(client: Client): Promise<void> {
     const row     = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
     const content = 'Click below to join or leave game groups and get access to their channels.';
 
-    const existingId = getConfig('role_board_message_id');
+    const existingId = getConfig(guildId, 'role_board_message_id');
     if (existingId) {
         const existing = await channel.messages.fetch(existingId).catch(() => null);
         if (existing) {
@@ -39,7 +48,7 @@ export async function ensureBoardMessage(client: Client): Promise<void> {
     }
 
     const sent = await channel.send({ content, components: [row] });
-    setConfig('role_board_message_id', sent.id);
+    setConfig(guildId, 'role_board_message_id', sent.id);
 }
 
 interface Menu {
@@ -48,7 +57,7 @@ interface Menu {
 }
 
 function buildGroupMenu(member: GuildMember, page: number): Menu {
-    const groups = getActiveGroups();
+    const groups = getActiveGroups(member.guild.id);
     if (groups.length === 0) {
         return { content: 'No game groups are available to join yet.', components: [] };
     }
@@ -111,7 +120,7 @@ export async function handleRoleBoardInteraction(interaction: Interaction): Prom
 
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('roleboard:select:')) {
         const page       = parseInt(interaction.customId.split(':')[2], 10) || 0;
-        const groups     = getActiveGroups();
+        const groups     = getActiveGroups(interaction.guild.id);
         const pageGroups = groups.slice(page * GROUPS_PER_PAGE, page * GROUPS_PER_PAGE + GROUPS_PER_PAGE);
         const selected   = new Set(interaction.values);
 

@@ -25,16 +25,20 @@ const command: CommandModule = {
                 .setDescription('Choose specific games from a menu instead of a random selection'))),
 
     async execute(interaction: ChatInputCommandInteraction, client: Client) {
+        if (!interaction.guildId) {
+            return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+        }
         if (!hasManagerAccess(interaction.member as GuildMember)) {
             return interaction.reply({ content: 'You need the manager role (or admin) to do that.', flags: MessageFlags.Ephemeral });
         }
 
-        const pick = interaction.options.getBoolean('pick') ?? false;
+        const guildId = interaction.guildId;
+        const pick    = interaction.options.getBoolean('pick') ?? false;
 
         if (!pick) {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             try {
-                await runWeeklyPoll(client);
+                await runWeeklyPoll(client, guildId);
                 await interaction.editReply({ content: 'Poll posted!' });
             } catch (err) {
                 console.error(err);
@@ -44,7 +48,7 @@ const command: CommandModule = {
             return;
         }
 
-        const roster = listGames().filter(g => g.name?.trim());
+        const roster = listGames(guildId).filter(g => g.name?.trim());
         if (roster.length === 0) {
             return interaction.reply({ content: 'The roster is empty. Add some games with `/game add` first.', flags: MessageFlags.Ephemeral });
         }
@@ -82,7 +86,7 @@ const command: CommandModule = {
 
         try {
             await selection.update({ content: 'Posting poll...', components: [] });
-            await runWeeklyPoll(client, { gameNames: selection.values });
+            await runWeeklyPoll(client, guildId, { gameNames: selection.values });
             await interaction.editReply({
                 content: `Poll posted with ${selection.values.length} game(s): ${selection.values.join(', ')}`,
             });

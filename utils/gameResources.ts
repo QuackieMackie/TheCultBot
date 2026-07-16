@@ -81,7 +81,7 @@ async function rollback(guild: Guild, created: { roleId: string; categoryId: str
 // Hides the group's channels from everyone but managers, then deletes the access role.
 // Channel/category IDs stay on the record so the group can be revived later.
 export async function quarantineGroupResources(guild: Guild, group: Group): Promise<void> {
-    const managerRoleId = getConfig('manager_role_id');
+    const managerRoleId = getConfig(guild.id, 'manager_role_id');
 
     const category = await guild.channels.fetch(group.categoryId).catch(() => null);
     if (category && category.type === ChannelType.GuildCategory) {

@@ -1,5 +1,6 @@
 import { Events, Client, REST, Routes } from 'discord.js';
 import { ensureBoardMessage } from 'utils/roleBoard';
+import { initGuildStorage } from 'utils/storage';
 import type { EventModule, CommandModule } from 'types';
 
 const event: EventModule = {
@@ -8,10 +9,14 @@ const event: EventModule = {
     async execute(client: Client) {
         console.log(`Ready! Logged in as ${client.user?.tag}`);
 
+        for (const guildId of client.guilds.cache.keys()) {
+            initGuildStorage(guildId);
+        }
+
         await ensureBoardMessage(client).catch(err => console.error('Role board refresh failed:', err));
 
-        if (!process.env.CLIENT_ID || !process.env.GUILD_ID) {
-            console.warn('Missing CLIENT_ID or GUILD_ID in env -- skipping command sync.');
+        if (!process.env.CLIENT_ID) {
+            console.warn('Missing CLIENT_ID in env -- skipping command sync.');
             return;
         }
 
@@ -29,7 +34,7 @@ async function syncCommands(client: Client): Promise<void> {
     const localCommands = [...commands.values()].map(c => c.data.toJSON());
 
     const registered = await rest.get(
-        Routes.applicationGuildCommands(process.env.CLIENT_ID!, process.env.GUILD_ID!)
+        Routes.applicationCommands(process.env.CLIENT_ID!)
     ) as Record<string, unknown>[];
 
     console.log(`Discord has ${registered.length} command(s), locally have ${localCommands.length}.`);
@@ -43,7 +48,7 @@ async function syncCommands(client: Client): Promise<void> {
     }
 
     await rest.put(
-        Routes.applicationGuildCommands(process.env.CLIENT_ID!, process.env.GUILD_ID!),
+        Routes.applicationCommands(process.env.CLIENT_ID!),
         { body: localCommands }
     );
 

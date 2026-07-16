@@ -1,8 +1,7 @@
 import { SlashCommandBuilder, MessageFlags, ChatInputCommandInteraction, Client, GuildMember, ChannelType } from 'discord.js';
 import { getConfig, setConfig } from 'utils/storage';
 import { hasManagerAccess } from 'utils/permissions';
-import { restartScheduler } from 'utils/scheduler';
-import { ensureBoardMessage } from 'utils/roleBoard';
+import { ensureBoardMessageForGuild } from 'utils/roleBoard';
 import type { CommandModule } from 'types';
 
 const command: CommandModule = {
@@ -69,20 +68,24 @@ const command: CommandModule = {
             .setDescription('Show the current configuration')),
 
     async execute(interaction: ChatInputCommandInteraction, client: Client) {
+        if (!interaction.guildId) {
+            return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+        }
         if (!hasManagerAccess(interaction.member as GuildMember)) {
             return interaction.reply({ content: 'You need the manager role (or admin) to do that.', flags: MessageFlags.Ephemeral });
         }
 
-        const sub = interaction.options.getSubcommand();
+        const guildId = interaction.guildId;
+        const sub     = interaction.options.getSubcommand();
 
         if (sub === 'show') {
-            const channelId  = getConfig('poll_channel_id');
-            const roleId     = getConfig('manager_role_id');
-            const size       = getConfig('poll_size');
-            const hour       = getConfig('poll_hour_utc');
-            const duration   = getConfig('poll_duration_hours');
-            const boardId    = getConfig('role_board_channel_id');
-            const autoOn     = getConfig('poll_auto_enabled') === 'true';
+            const channelId  = getConfig(guildId, 'poll_channel_id');
+            const roleId     = getConfig(guildId, 'manager_role_id');
+            const size       = getConfig(guildId, 'poll_size');
+            const hour       = getConfig(guildId, 'poll_hour_utc');
+            const duration   = getConfig(guildId, 'poll_duration_hours');
+            const boardId    = getConfig(guildId, 'role_board_channel_id');
+            const autoOn     = getConfig(guildId, 'poll_auto_enabled') === 'true';
             return interaction.reply({
                 content: [
                     '**Current Config**',
@@ -104,32 +107,31 @@ const command: CommandModule = {
             if (!allowed.includes(channel.type as ChannelType.GuildText)) {
                 return interaction.reply({ content: 'Please select a standard text channel.', flags: MessageFlags.Ephemeral });
             }
-            setConfig('poll_channel_id', channel.id);
+            setConfig(guildId, 'poll_channel_id', channel.id);
             return interaction.reply({ content: `Poll channel set to ${channel}.`, flags: MessageFlags.Ephemeral });
         }
 
         if (sub === 'poll-size') {
             const count = interaction.options.getInteger('count', true);
-            setConfig('poll_size', count);
+            setConfig(guildId, 'poll_size', count);
             return interaction.reply({ content: `Poll size set to **${count}** games.`, flags: MessageFlags.Ephemeral });
         }
 
         if (sub === 'poll-time') {
             const hour = interaction.options.getInteger('hour', true);
-            setConfig('poll_hour_utc', hour);
-            restartScheduler(client);
-            return interaction.reply({ content: `Poll time set to **${hour}:00 UTC** every Monday. Scheduler restarted.`, flags: MessageFlags.Ephemeral });
+            setConfig(guildId, 'poll_hour_utc', hour);
+            return interaction.reply({ content: `Poll time set to **${hour}:00 UTC** every Monday.`, flags: MessageFlags.Ephemeral });
         }
 
         if (sub === 'poll-duration') {
             const hours = interaction.options.getInteger('hours', true);
-            setConfig('poll_duration_hours', hours);
+            setConfig(guildId, 'poll_duration_hours', hours);
             return interaction.reply({ content: `Poll duration set to **${hours}** hours.`, flags: MessageFlags.Ephemeral });
         }
 
         if (sub === 'poll-auto') {
             const enabled = interaction.options.getBoolean('enabled', true);
-            setConfig('poll_auto_enabled', enabled ? 'true' : 'false');
+            setConfig(guildId, 'poll_auto_enabled', enabled ? 'true' : 'false');
             return interaction.reply({
                 content: enabled
                     ? 'Automatic weekly polls are now **enabled**.'
@@ -140,7 +142,7 @@ const command: CommandModule = {
 
         if (sub === 'manager-role') {
             const role = interaction.options.getRole('role', true);
-            setConfig('manager_role_id', role.id);
+            setConfig(guildId, 'manager_role_id', role.id);
             return interaction.reply({ content: `Manager role set to ${role}.`, flags: MessageFlags.Ephemeral });
         }
 
@@ -150,11 +152,11 @@ const command: CommandModule = {
             if (!allowed.includes(channel.type as ChannelType.GuildText)) {
                 return interaction.reply({ content: 'Please select a standard text channel.', flags: MessageFlags.Ephemeral });
             }
-            setConfig('role_board_channel_id', channel.id);
-            setConfig('role_board_message_id', '');
+            setConfig(guildId, 'role_board_channel_id', channel.id);
+            setConfig(guildId, 'role_board_message_id', '');
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             try {
-                await ensureBoardMessage(client);
+                await ensureBoardMessageForGuild(client, guildId);
                 return interaction.editReply({ content: `Role board channel set to ${channel}. Board message posted.` });
             } catch (err) {
                 console.error(err);
