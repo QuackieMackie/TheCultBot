@@ -1,5 +1,15 @@
 .idea
 node_modules
+
+# Env files (keep the committed example)
 .env
-data/
+.env.*
+!.env.example
+
+# Build output
 dist/
+build/
+.svelte-kit/
+
+# Runtime data
+data/

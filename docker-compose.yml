@@ -1,15 +1,59 @@
+# Portainer only RUNS these images; build them on the host first, then deploy the stack:
+#   docker build -f apps/bot/Dockerfile -t thecultbot:latest .
+#   docker build -f apps/web/Dockerfile -t thecultweb:latest .
+# (run both from the repo root — the Dockerfiles need the whole workspace as context.)
 services:
   cultbot:
-    build: .
+    container_name: thecultbot
+    image: thecultbot:latest
     restart: unless-stopped
     init: true
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
       CLIENT_ID: ${CLIENT_ID:?set CLIENT_ID}
+      INTERNAL_API_PORT: "8081"
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
     volumes:
-      - /srv/containers/thecults/discord:/app/data
+      - /srv/containers/docker/thecults/discord:/app/data
+    networks:
+      - cultnet
     deploy:
       resources:
         limits:
           memory: 512M
           cpus: "0.5"
+
+  web:
+    container_name: thecultweb
+    image: thecultweb:latest
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - cultbot
+    environment:
+      PORT: "3000"
+      ORIGIN: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}
+      PROTOCOL_HEADER: x-forwarded-proto
+      ADDRESS_HEADER: Cf-Connecting-Ip
+      BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}
+      DISCORD_CLIENT_ID: ${CLIENT_ID:?set CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:?set DISCORD_CLIENT_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      INTERNAL_API_URL: http://cultbot:8081
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
+      CULTBOT_DATA_DIR: /app/data
+    volumes:
+      - /srv/containers/docker/thecults/discord:/app/data:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - cultnet
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+networks:
+  cultnet:
+    driver: bridge
