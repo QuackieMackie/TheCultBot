@@ -2,7 +2,11 @@ import { SlashCommandBuilder, MessageFlags, ChatInputCommandInteraction, Client,
 import { getConfig } from '@thecult/shared';
 import { hasManagerAccess } from 'utils/permissions';
 import { applyConfigChange } from 'utils/configService';
+import { actorOf, recordAudit } from 'utils/audit';
+import { logger } from 'utils/logger';
 import type { CommandModule } from 'types';
+
+const log = logger('config');
 
 const command: CommandModule = {
     data: new SlashCommandBuilder()
@@ -107,9 +111,11 @@ const command: CommandModule = {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
             const message = await applyConfigChange(client, guildId, change.key, change.value);
+            log.info('Config changed', { guild: guildId, key: change.key, value: change.value, by: interaction.user.username });
+            recordAudit(guildId, actorOf(interaction), 'config.set', change.key, change.value || '(cleared)', 'command');
             return interaction.editReply({ content: message });
         } catch (err) {
-            console.error(err);
+            log.error('Config change failed', { guild: guildId, key: change.key, err });
             const message = err instanceof Error ? err.message : 'An error occurred.';
             return interaction.editReply({ content: message });
         }

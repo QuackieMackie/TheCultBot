@@ -1,5 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { getConfig, listGames, getActiveGroups } from '@thecult/shared';
+import { getConfig, listGames, getActiveGroups, listGroups, listAlerts, listAudit } from '@thecult/shared';
 import { bot } from '$lib/server/bot';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -33,13 +33,23 @@ export const load: PageServerLoad = async ({ params, locals }) => {
         bot.roles(guildId).catch(() => [])
     ]);
 
+    // Quarantined groups still hold their channels, so import has to see them too.
+    const claimed: Record<string, string> = {};
+    for (const g of listGroups(guildId)) {
+        claimed[g.textChannelId]  = g.name;
+        claimed[g.voiceChannelId] = g.name;
+    }
+
     return {
         guild,
         config:   configSnapshot(guildId),
         games:    listGames(guildId),
-        groups:   getActiveGroups(guildId).map((g) => g.name),
+        groups:   getActiveGroups(guildId),
+        alerts:   listAlerts(guildId),
+        audit:    listAudit(guildId, 25),
         channels,
-        roles
+        roles,
+        claimed
     };
 };
 
@@ -62,13 +72,27 @@ export const actions: Actions = {
         }
     },
 
+    dismissAlert: async ({ request, params, locals }) => {
+        const uid  = actingUser(locals);
+        const data = await request.formData();
+        const id   = String(data.get('id') ?? '');
+        try {
+            await bot.dismissAlert(params.guildId, uid, id);
+            return { ok: true, message: 'Notice dismissed.' };
+        } catch (err) {
+            return fail(400, { message: err instanceof Error ? err.message : 'Could not dismiss the notice.' });
+        }
+    },
+
     addGame: async ({ request, params, locals }) => {
         const uid  = actingUser(locals);
         const data = await request.formData();
 
-        // "group" is either an existing group name, or the typed name of a new group.
-        const useNew = String(data.get('groupChoice') ?? '') === '__new__';
-        const group  = useNew ? String(data.get('newGroup') ?? '').trim() : String(data.get('group') ?? '').trim();
+        // The dropdown carries either an existing group name or the __new__ sentinel, in which
+        // case the group is the one typed into "newGroup".
+        const choice = String(data.get('groupChoice') ?? '');
+        const useNew = choice === '__new__';
+        const group  = useNew ? String(data.get('newGroup') ?? '').trim() : choice.trim();
 
         const payload = {
             name:         String(data.get('name') ?? '').trim(),
@@ -88,16 +112,64 @@ export const actions: Actions = {
         }
     },
 
+    importGame: async ({ request, params, locals }) => {
+        const uid  = actingUser(locals);
+        const data = await request.formData();
+
+        // An empty roleId means "create one", so the name and colour fields come along with it.
+        const roleId = String(data.get('roleId') ?? '').trim();
+
+        const payload = {
+            name:           String(data.get('name') ?? '').trim(),
+            group:          String(data.get('newGroup') ?? '').trim(),
+            playerCount:    Number(data.get('playerCount') ?? 1),
+            textChannelId:  String(data.get('textChannelId') ?? '').trim(),
+            voiceChannelId: String(data.get('voiceChannelId') ?? '').trim(),
+            roleId:         roleId || undefined,
+            roleName:       roleId ? undefined : String(data.get('roleName') ?? '').trim(),
+            roleColour:     roleId ? undefined : String(data.get('roleColour') ?? '').trim()
+        };
+
+        try {
+            const res = await bot.importGame(params.guildId, uid, payload);
+            return { ok: true, message: res.message };
+        } catch (err) {
+            return fail(400, { message: err instanceof Error ? err.message : 'Could not import the game.' });
+        }
+    },
+
     editGame: async ({ request, params, locals }) => {
+        const uid     = actingUser(locals);
+        const data    = await request.formData();
+        const name    = String(data.get('name') ?? '');
+        const renamed = String(data.get('newName') ?? '').trim();
+        const group   = String(data.get('group') ?? '').trim();
+        const playerCount = Number(data.get('playerCount') ?? 1);
+        try {
+            await bot.editGame(params.guildId, uid, name, {
+                name:  renamed || undefined,
+                group: group || undefined,
+                playerCount
+            });
+            return { ok: true, message: `${renamed || name} updated.` };
+        } catch (err) {
+            return fail(400, { message: err instanceof Error ? err.message : 'Could not update the game.' });
+        }
+    },
+
+    editGroup: async ({ request, params, locals }) => {
         const uid  = actingUser(locals);
         const data = await request.formData();
         const name = String(data.get('name') ?? '');
-        const playerCount = Number(data.get('playerCount') ?? 1);
         try {
-            await bot.editGame(params.guildId, uid, name, { playerCount });
-            return { ok: true, message: `${name} updated.` };
+            const res = await bot.editGroup(params.guildId, uid, name, {
+                name:       String(data.get('newName') ?? '').trim() || undefined,
+                roleName:   String(data.get('roleName') ?? '').trim() || undefined,
+                roleColour: String(data.get('roleColour') ?? '').trim() || undefined
+            });
+            return { ok: true, message: res.message };
         } catch (err) {
-            return fail(400, { message: err instanceof Error ? err.message : 'Could not update the game.' });
+            return fail(400, { message: err instanceof Error ? err.message : 'Could not update the group.' });
         }
     },
 
@@ -107,9 +179,13 @@ export const actions: Actions = {
         const name = String(data.get('name') ?? '');
         try {
             const res = await bot.removeGame(params.guildId, uid, name);
-            const note = res.quarantined
-                ? ` The ${res.quarantined} group was emptied and archived.`
-                : '';
+            const note = res.cleanupFailed
+                ? ` The ${res.cleanupFailed} group was emptied and archived, but its channels could not be tidied up in Discord. See the omens above.`
+                : !res.quarantined
+                    ? ''
+                    : res.adopted
+                        ? ` The ${res.quarantined} group was emptied and archived, but its imported channels and role were left untouched.`
+                        : ` The ${res.quarantined} group was emptied and archived.`;
             return { ok: true, message: `${res.removed} removed.${note}` };
         } catch (err) {
             return fail(400, { message: err instanceof Error ? err.message : 'Could not remove the game.' });

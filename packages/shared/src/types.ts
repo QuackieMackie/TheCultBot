@@ -18,6 +18,29 @@ export interface Group {
     voiceChannelId: string;
     quarantined:    boolean;
     quarantinedAt?: string;
+    adopted?:       boolean;
+}
+
+export interface Alert {
+    id:      string;
+    key:     string;
+    scope:   string;
+    message: string;
+    detail:  string;
+    firstAt: string;
+    lastAt:  string;
+    count:   number;
+}
+
+export interface AuditEntry {
+    id:      string;
+    at:      string;
+    actorId: string;
+    actor:   string;
+    action:  string;
+    target:  string;
+    detail:  string;
+    source:  'dashboard' | 'command';
 }
 
 export interface StoredConfig {

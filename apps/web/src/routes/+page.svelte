@@ -1,12 +1,9 @@
 <script lang="ts">
     import Seal from '$lib/Seal.svelte';
+    import Flash from '$lib/components/Flash.svelte';
     import type { PageData } from './$types';
 
     let { data }: { data: PageData } = $props();
-
-    function icon(g: { id: string; icon: string | null }): string | null {
-        return g.icon;
-    }
 </script>
 
 {#if !data.user}
@@ -29,15 +26,18 @@
         </div>
 
         {#if data.botDown}
-            <div class="flash err">The bot is unreachable right now. Its council can't be summoned, try again shortly.</div>
+            <Flash message="The bot is unreachable right now. Its council can't be summoned, try again shortly." />
         {/if}
 
         {#if data.guilds && data.guilds.length > 0}
             <div class="guild-grid">
                 {#each data.guilds as g (g.id)}
                     <a class="guild-card panel" href="/g/{g.id}">
-                        <Seal size={92} src={icon(g)} label={g.name} />
+                        <Seal size={92} src={g.icon} label={g.name} />
                         <span class="guild-name">{g.name}</span>
+                        {#if g.alerts}
+                            <span class="omens-badge">⚠ {g.alerts} {g.alerts === 1 ? 'omen' : 'omens'}</span>
+                        {/if}
                         <span class="enter mono">Tend →</span>
                     </a>
                 {/each}
@@ -84,6 +84,11 @@
     }
     .guild-card:hover { transform: translateY(-3px); border-color: var(--line-strong); }
     .guild-name { font-family: var(--display); font-size: 22px; text-align: center; }
+    .omens-badge {
+        font-size: 11px; letter-spacing: 0.06em; color: var(--ember-soft);
+        padding: 3px 9px; border-radius: 999px;
+        border: 1px solid rgba(228, 85, 46, 0.35); background: rgba(228, 85, 46, 0.08);
+    }
     .enter { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
     .guild-card:hover .enter { color: var(--ember); }
 

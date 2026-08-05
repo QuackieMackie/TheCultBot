@@ -6,7 +6,10 @@ import { initStorage } from '@thecult/shared';
 import { startScheduler } from 'utils/scheduler';
 import { startHeartbeat } from 'utils/health';
 import { startInternalApi } from 'utils/internalApi';
+import { logger } from 'utils/logger';
 import type { CommandModule, EventModule } from 'types';
+
+const log = logger('bot');
 
 declare module 'discord.js' {
     interface Client {
@@ -28,24 +31,30 @@ for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'))) 
 const eventsPath = path.join(__dirname, 'events');
 for (const file of fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'))) {
     const event: EventModule = require(path.join(eventsPath, file)).default;
+    const onError = (err: unknown) => log.error('Event handler failed', { event: event.name, err });
     if (event.once) {
-        client.once(event.name, (...args) => event.execute(...args).catch(console.error));
+        client.once(event.name, (...args) => event.execute(...args).catch(onError));
     } else {
-        client.on(event.name, (...args) => event.execute(...args).catch(console.error));
+        client.on(event.name, (...args) => event.execute(...args).catch(onError));
     }
 }
+
+log.info('Starting', { commands: client.commands.size, logLevel: process.env.LOG_LEVEL || 'info' });
 
 initStorage();
 startScheduler(client);
 startHeartbeat(client);
-startInternalApi(client).catch(err => console.error('Internal API failed to start:', err));
+startInternalApi(client).catch(err => log.error('Internal API failed to start', { err }));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
-        console.log(`Received ${signal}, shutting down...`);
+        log.info('Shutting down', { signal });
         client.destroy();
         process.exit(0);
     });
 }
 
-client.login(process.env.DISCORD_TOKEN).catch(console.error);
+process.on('unhandledRejection', err => log.error('Unhandled rejection', { err }));
+process.on('uncaughtException',  err => log.error('Uncaught exception',  { err }));
+
+client.login(process.env.DISCORD_TOKEN).catch(err => log.error('Login failed', { err }));

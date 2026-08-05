@@ -10,26 +10,39 @@ import {
     type MessageActionRowComponentBuilder,
 } from 'discord.js';
 import { getConfig, setConfig, getActiveGroups } from '@thecult/shared';
+import { ALERT_ROLE_BOARD, describeDiscordError, raiseAlert, resolveAlert } from 'utils/alerts';
+import { logger } from 'utils/logger';
 
 const GROUPS_PER_PAGE = 25;
+const log             = logger('roleBoard');
 
 // Refreshes the persistent board message for every guild the bot is in. Safe to
 // call repeatedly (e.g. on ready).
 export async function ensureBoardMessage(client: Client): Promise<void> {
     for (const guildId of client.guilds.cache.keys()) {
         await ensureBoardMessageForGuild(client, guildId).catch(err =>
-            console.error(`Role board refresh failed for guild ${guildId}:`, err));
+            log.error('Role board refresh failed', { guild: guildId, err }));
     }
 }
 
-// Posts (or updates) one guild's persistent board message: a single button that
-// opens each member's private, paginated group menu. Safe to call repeatedly.
+/**
+ * Posts (or updates) one guild's persistent board message: a single button that opens each
+ * member's private, paginated group menu. Safe to call repeatedly.
+ *
+ * @throws When the board cannot be posted, with wording aimed at a server admin. The same
+ *         wording is recorded as a guild alert, so the boot-time refresh (which has no caller
+ *         to report to) still reaches the dashboard.
+ */
 export async function ensureBoardMessageForGuild(client: Client, guildId: string): Promise<void> {
     const channelId = getConfig(guildId, 'role_board_channel_id');
     if (!channelId) return;
 
     const channel = await client.channels.fetch(channelId).catch(() => null);
-    if (!channel || channel.isDMBased() || !channel.isTextBased()) return;
+    if (!channel || channel.isDMBased() || !channel.isTextBased()) {
+        const message = 'The role board channel no longer exists or I can no longer see it. Pick a channel again on the dashboard.';
+        raiseAlert(guildId, ALERT_ROLE_BOARD, 'roleBoard', message);
+        throw new Error(message);
+    }
 
     const button = new ButtonBuilder()
         .setCustomId('roleboard:open')
@@ -39,16 +52,26 @@ export async function ensureBoardMessageForGuild(client: Client, guildId: string
     const content = 'Click below to join or leave game groups and get access to their channels.';
 
     const existingId = getConfig(guildId, 'role_board_message_id');
-    if (existingId) {
-        const existing = await channel.messages.fetch(existingId).catch(() => null);
-        if (existing) {
-            await existing.edit({ content, components: [row] });
-            return;
-        }
-    }
 
-    const sent = await channel.send({ content, components: [row] });
-    setConfig(guildId, 'role_board_message_id', sent.id);
+    try {
+        if (existingId) {
+            const existing = await channel.messages.fetch(existingId).catch(() => null);
+            if (existing) {
+                await existing.edit({ content, components: [row] });
+                resolveAlert(guildId, ALERT_ROLE_BOARD);
+                return;
+            }
+        }
+
+        const sent = await channel.send({ content, components: [row] });
+        setConfig(guildId, 'role_board_message_id', sent.id);
+        resolveAlert(guildId, ALERT_ROLE_BOARD);
+    } catch (err) {
+        const message = describeDiscordError(err, channel.name, 'The role board message could not be posted.');
+        raiseAlert(guildId, ALERT_ROLE_BOARD, 'roleBoard', message, err);
+        log.error('Role board post failed', { guild: guildId, channel: channelId, err });
+        throw new Error(message);
+    }
 }
 
 interface Menu {
@@ -137,8 +160,9 @@ export async function handleRoleBoardInteraction(interaction: Interaction): Prom
         try {
             if (toAdd.length)    await member.roles.add(toAdd, 'Role board self-assign');
             if (toRemove.length) await member.roles.remove(toRemove, 'Role board self-assign');
+            log.info('Roles updated from board', { guild: interaction.guild.id, user: member.user.username, added: toAdd.length, removed: toRemove.length });
         } catch (err) {
-            console.error(err);
+            log.error('Role board assign failed', { guild: interaction.guild.id, user: member.user.username, err });
             await interaction.update({ content: 'I could not update your roles. Check that my role is above the game roles and that I have Manage Roles.', components: [] });
             return;
         }

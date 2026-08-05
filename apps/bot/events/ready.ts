@@ -1,29 +1,32 @@
 import { Events, Client, REST, Routes } from 'discord.js';
 import { ensureBoardMessage } from 'utils/roleBoard';
 import { initGuildStorage } from '@thecult/shared';
+import { logger } from 'utils/logger';
 import type { EventModule, CommandModule } from 'types';
+
+const log = logger('ready');
 
 const event: EventModule = {
     name: Events.ClientReady,
     once: true,
     async execute(client: Client) {
-        console.log(`Ready! Logged in as ${client.user?.tag}`);
+        log.info('Logged in', { user: client.user?.tag, guilds: client.guilds.cache.size });
 
         for (const guildId of client.guilds.cache.keys()) {
             initGuildStorage(guildId);
         }
 
-        await ensureBoardMessage(client).catch(err => console.error('Role board refresh failed:', err));
+        await ensureBoardMessage(client).catch(err => log.error('Role board refresh failed', { err }));
 
         if (!process.env.CLIENT_ID) {
-            console.warn('Missing CLIENT_ID in env -- skipping command sync.');
+            log.warn('Missing CLIENT_ID in env, skipping command sync.');
             return;
         }
 
         try {
             await syncCommands(client);
         } catch (err) {
-            console.error('Command sync failed:', err);
+            log.error('Command sync failed', { err });
         }
     },
 };
@@ -37,13 +40,13 @@ async function syncCommands(client: Client): Promise<void> {
         Routes.applicationCommands(process.env.CLIENT_ID!)
     ) as Record<string, unknown>[];
 
-    console.log(`Discord has ${registered.length} command(s), locally have ${localCommands.length}.`);
+    log.debug('Comparing commands', { registered: registered.length, local: localCommands.length });
 
     const localSorted      = JSON.stringify(localCommands.map(normalise).sort(byName));
     const registeredSorted = JSON.stringify(registered.map(normalise).sort(byName));
 
     if (localSorted === registeredSorted) {
-        console.log('Commands up to date, no sync needed.');
+        log.info('Commands up to date, no sync needed.', { count: localCommands.length });
         return;
     }
 
@@ -52,7 +55,7 @@ async function syncCommands(client: Client): Promise<void> {
         { body: localCommands }
     );
 
-    console.log(`Commands synced (${localCommands.length} registered).`);
+    log.info('Commands synced', { count: localCommands.length });
 }
 
 interface NormalisedCommand {

@@ -1,8 +1,8 @@
-import { Client, ChannelType } from 'discord.js';
+import { Client, ChannelType, PermissionFlagsBits } from 'discord.js';
 import { getConfig, setConfig } from '@thecult/shared';
 import { ensureBoardMessageForGuild } from 'utils/roleBoard';
 
-const TEXT_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
+const TEXT_CHANNEL_TYPES: ChannelType[] = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 
 const EDITABLE_KEYS = new Set([
     'poll_size',
@@ -22,13 +22,21 @@ function intInRange(value: string, min: number, max: number, label: string): str
     return String(n);
 }
 
+// Both channel settings are places the bot has to post later, often with nobody watching, so
+// the permission is checked while there is still someone to tell.
 async function assertGuildTextChannel(client: Client, guildId: string, channelId: string): Promise<void> {
     const channel = await client.channels.fetch(channelId).catch(() => null);
-    if (!channel || channel.isDMBased() || !('guild' in channel) || channel.guild?.id !== guildId) {
+    if (!channel || channel.isDMBased() || !channel.isTextBased() || channel.guild.id !== guildId) {
         throw new Error('That channel could not be found in this server.');
     }
-    if (!TEXT_CHANNEL_TYPES.includes(channel.type as ChannelType.GuildText)) {
+    if (!TEXT_CHANNEL_TYPES.includes(channel.type)) {
         throw new Error('Please choose a standard text channel.');
+    }
+
+    const me    = channel.guild.members.me ?? await channel.guild.members.fetchMe().catch(() => null);
+    const perms = me && channel.permissionsFor(me);
+    if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms.has(PermissionFlagsBits.SendMessages)) {
+        throw new Error(`I cannot post in #${channel.name}. Give my role View Channel and Send Messages there, then try again.`);
     }
 }
 
@@ -77,9 +85,19 @@ export async function applyConfigChange(client: Client, guildId: string, key: st
         }
         case 'role_board_channel_id': {
             await assertGuildTextChannel(client, guildId, rawValue);
+            const previousChannel = getConfig(guildId, key);
+            const previousMessage = getConfig(guildId, 'role_board_message_id');
             setConfig(guildId, key, rawValue);
             setConfig(guildId, 'role_board_message_id', '');
-            await ensureBoardMessageForGuild(client, guildId);
+            try {
+                // The board reads its channel back out of config, so the new value has to be in
+                // place before the attempt. Put the old one back if the post fails.
+                await ensureBoardMessageForGuild(client, guildId);
+            } catch (err) {
+                setConfig(guildId, key, previousChannel);
+                setConfig(guildId, 'role_board_message_id', previousMessage);
+                throw err;
+            }
             return 'Role board channel updated and board message posted.';
         }
         default:

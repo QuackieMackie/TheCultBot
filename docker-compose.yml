@@ -13,6 +13,7 @@ services:
       CLIENT_ID: ${CLIENT_ID:?set CLIENT_ID}
       INTERNAL_API_PORT: "8081"
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - /srv/containers/docker/thecults/discord:/app/data
     networks:

@@ -10,8 +10,12 @@ import {
 } from 'discord.js';
 import { hasManagerAccess } from 'utils/permissions';
 import { runWeeklyPoll } from 'utils/pollRunner';
+import { actorOf, recordAudit } from 'utils/audit';
 import { listGames } from '@thecult/shared';
+import { logger } from 'utils/logger';
 import type { CommandModule } from 'types';
+
+const log = logger('poll');
 
 const command: CommandModule = {
     data: new SlashCommandBuilder()
@@ -39,9 +43,10 @@ const command: CommandModule = {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
             try {
                 await runWeeklyPoll(client, guildId);
+                recordAudit(guildId, actorOf(interaction), 'poll.run', 'random', '', 'command');
                 await interaction.editReply({ content: 'Poll posted!' });
             } catch (err) {
-                console.error(err);
+                log.error('Poll failed', { guild: guildId, mode: 'random', err });
                 const message = err instanceof Error ? err.message : 'An error occurred.';
                 await interaction.editReply({ content: `Failed to post poll: ${message}` });
             }
@@ -87,11 +92,12 @@ const command: CommandModule = {
         try {
             await selection.update({ content: 'Posting poll...', components: [] });
             await runWeeklyPoll(client, guildId, { gameNames: selection.values });
+            recordAudit(guildId, actorOf(interaction), 'poll.run', 'pick', selection.values.join(', '), 'command');
             await interaction.editReply({
                 content: `Poll posted with ${selection.values.length} game(s): ${selection.values.join(', ')}`,
             });
         } catch (err) {
-            console.error(err);
+            log.error('Poll failed', { guild: guildId, mode: 'pick', err });
             const message = err instanceof Error ? err.message : 'An error occurred.';
             await interaction.editReply({ content: `Failed to post poll: ${message}`, components: [] });
         }

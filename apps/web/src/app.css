@@ -115,9 +115,17 @@ h1, h2, h3 {
 .section-head h2 { font-size: 30px; }
 .section-head .rune { color: var(--verdigris); font-size: 13px; }
 
-.field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
-.field label { font-size: 12px; letter-spacing: 0.04em; color: var(--bone-dim); }
-.field .hint { font-size: 11.5px; color: var(--muted); }
+.subpanel { background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+
+/* Shared, alignment-safe setting: label / [input + button] / hint. */
+.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 24px; }
+.setting { display: grid; gap: 7px; align-content: start; }
+.setting > label { font-size: 12px; letter-spacing: 0.04em; color: var(--bone-dim); }
+.control { display: flex; align-items: center; gap: 10px; }
+.control > select, .control > input { flex: 1; min-width: 0; }
+.control > .btn { flex: none; }
+.hint { font-size: 11.5px; color: var(--muted); margin: 0; }
+.hint.warn { color: var(--ember); }
 
 input[type='text'],
 input[type='number'],
@@ -135,8 +143,6 @@ select {
 input:focus,
 select:focus { outline: none; border-color: var(--ember); box-shadow: 0 0 0 3px rgba(228, 85, 46, 0.18); }
 select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 34px; }
-
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
 
 .btn {
     display: inline-flex;
@@ -190,12 +196,12 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .flash.err { color: var(--ember-soft); border-color: rgba(228, 85, 46, 0.4); background: rgba(228, 85, 46, 0.07); }
 
 .muted { color: var(--muted); }
-.stack > * + * { margin-top: 14px; }
-.row { display: flex; align-items: center; gap: 12px; }
-.spread { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+@media (max-width: 720px) {
+    .settings { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 640px) {
-    .grid-2 { grid-template-columns: 1fr; }
     .section-head h2 { font-size: 25px; }
     .shell { padding: 0 16px; }
     .topbar { padding: 18px 16px; }

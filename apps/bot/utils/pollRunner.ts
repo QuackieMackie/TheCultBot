@@ -11,6 +11,10 @@ import {
     MAX_GAME_NAME_LENGTH,
     type Game,
 } from '@thecult/shared';
+import { describeDiscordError } from 'utils/alerts';
+import { logger } from 'utils/logger';
+
+const log = logger('pollRunner');
 
 interface PollOptions {
     gameNames?: string[];
@@ -50,15 +54,20 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         if (games.length === 0) throw new Error('No valid games found in the roster.');
     }
 
-    await channel.send({
-        content: 'Weekly Game Vote -- pick what we\'re playing this week!',
-        poll: {
-            question:         { text: 'Which game should we play this week?' },
-            answers:          games.map(g => ({ text: answerText(g) })),
-            duration:         parseInt(getConfig(guildId, 'poll_duration_hours'), 10),
-            allowMultiselect: true,
-        },
-    });
+    try {
+        await channel.send({
+            content: 'Weekly Game Vote -- pick what we\'re playing this week!',
+            poll: {
+                question:         { text: 'Which game should we play this week?' },
+                answers:          games.map(g => ({ text: answerText(g) })),
+                duration:         parseInt(getConfig(guildId, 'poll_duration_hours'), 10),
+                allowMultiselect: true,
+            },
+        });
+    } catch (err) {
+        log.error('Poll post failed', { guild: guildId, channel: channelId, err });
+        throw new Error(describeDiscordError(err, channel.name, 'The poll could not be posted to the poll channel.'));
+    }
 
     if (recording) {
         const now = new Date().toISOString();
@@ -67,7 +76,7 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         }
     }
 
-    console.log(`Weekly poll posted in channel ${channelId} with ${games.length} game(s).`);
+    log.info('Weekly poll posted', { guild: guildId, channel: channelId, games: games.length, recording });
 }
 
 function resolveNames(guildId: string, names: string[]): Game[] {
@@ -90,12 +99,20 @@ function shimGame(name: string): Game {
 
 async function selectWeighted(guildId: string, guild: Guild, size: number): Promise<Game[]> {
     await guild.members.fetch();
-    const qualified = getActiveGames(guildId).filter(game => {
+    const active    = getActiveGames(guildId);
+    const qualified = active.filter(game => {
         const group = getGroupByName(guildId, game.group);
-        if (!group || !group.roleId) return false;
-        const role  = guild.roles.cache.get(group.roleId);
-        return (role?.members.size ?? 0) >= game.playerCount;
+        if (!group || !group.roleId) {
+            log.debug('Game skipped, group has no role', { guild: guildId, game: game.name, group: game.group });
+            return false;
+        }
+        const role    = guild.roles.cache.get(group.roleId);
+        const members = role?.members.size ?? 0;
+        log.debug('Game weighed', { guild: guildId, game: game.name, members, needed: game.playerCount });
+        return members >= game.playerCount;
     });
+
+    log.info('Weighted selection', { guild: guildId, active: active.length, qualified: qualified.length, picking: size });
     return pickWeightedGames(qualified, size);
 }
 

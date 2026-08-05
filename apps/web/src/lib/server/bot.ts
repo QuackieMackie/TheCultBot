@@ -1,8 +1,7 @@
 import { env } from '$env/dynamic/private';
+import type { GuildSummary, ChannelSummary, RoleSummary } from '$lib/types';
 
-export interface GuildSummary { id: string; name: string; icon: string | null; }
-export interface ChannelSummary { id: string; name: string; type: number; }
-export interface RoleSummary { id: string; name: string; color: string; }
+export type { GuildSummary, ChannelSummary, RoleSummary } from '$lib/types';
 
 function base(): string {
     return env.INTERNAL_API_URL || 'http://localhost:8081';
@@ -55,14 +54,44 @@ export const bot = {
         }
     ) => call<{ message: string }>(`/internal/guilds/${guildId}/games`, { method: 'POST', body: JSON.stringify({ actingUserId, ...game }) }),
 
-    editGame: (guildId: string, actingUserId: string, name: string, patch: { playerCount?: number; group?: string }) =>
+    // Registers a game against channels that already exist. The bot adopts them as-is and
+    // changes nothing about their contents or permissions.
+    importGame: (
+        guildId: string,
+        actingUserId: string,
+        game: {
+            name: string;
+            group: string;
+            playerCount: number;
+            textChannelId: string;
+            voiceChannelId: string;
+            roleId?: string;
+            roleName?: string;
+            roleColour?: string;
+        }
+    ) => call<{ message: string }>(`/internal/guilds/${guildId}/games/import`, { method: 'POST', body: JSON.stringify({ actingUserId, ...game }) }),
+
+    editGame: (guildId: string, actingUserId: string, name: string, patch: { name?: string; playerCount?: number; group?: string }) =>
         call(`/internal/guilds/${guildId}/games/${encodeURIComponent(name)}`, {
             method: 'PATCH',
             body:   JSON.stringify({ actingUserId, ...patch })
         }),
 
+    // Role name and colour live on the group, not on the individual games inside it.
+    editGroup: (guildId: string, actingUserId: string, name: string, patch: { name?: string; roleName?: string; roleColour?: string }) =>
+        call<{ message: string }>(`/internal/guilds/${guildId}/groups/${encodeURIComponent(name)}`, {
+            method: 'PATCH',
+            body:   JSON.stringify({ actingUserId, ...patch })
+        }),
+
     removeGame: (guildId: string, actingUserId: string, name: string) =>
-        call<{ removed: string; quarantined: string | null }>(`/internal/guilds/${guildId}/games/${encodeURIComponent(name)}`, {
+        call<{ removed: string; quarantined: string | null; adopted: boolean; cleanupFailed: string | null }>(`/internal/guilds/${guildId}/games/${encodeURIComponent(name)}`, {
+            method: 'DELETE',
+            body:   JSON.stringify({ actingUserId })
+        }),
+
+    dismissAlert: (guildId: string, actingUserId: string, alertId: string) =>
+        call<{ dismissed: boolean }>(`/internal/guilds/${guildId}/alerts/${encodeURIComponent(alertId)}`, {
             method: 'DELETE',
             body:   JSON.stringify({ actingUserId })
         }),
