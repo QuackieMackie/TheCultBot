@@ -8,6 +8,9 @@ export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.resolve(process.cwd
 // Discord caps poll answer text at 55 characters, so a longer name could never be polled.
 export const MAX_GAME_NAME_LENGTH = 55;
 
+// Discord caps message content at 2000 characters.
+export const MAX_POLL_MESSAGE_LENGTH = 2000;
+
 const WEIGHT_CAP = 8;
 
 // Oldest alerts are dropped past this, so a guild that ignores its dashboard cannot grow the
@@ -18,6 +21,10 @@ const MAX_ALERTS = 25;
 // not a permanent record.
 const MAX_AUDIT = 100;
 
+// Config values can run to MAX_POLL_MESSAGE_LENGTH, so an untruncated detail would let a
+// hundred entries dwarf the rest of a guild's data.
+const MAX_AUDIT_DETAIL = 200;
+
 const CONFIG_DEFAULTS: StoredConfig = {
     poll_size:       '5',
     poll_channel_id: '',
@@ -25,6 +32,7 @@ const CONFIG_DEFAULTS: StoredConfig = {
     poll_hour_utc:         '9',
     poll_duration_hours:   '24',
     poll_auto_enabled:     'true',
+    poll_message:          'Weekly Game Vote -- pick what we\'re playing this week!',
     role_board_channel_id: '',
     role_board_message_id: '',
 };
@@ -480,11 +488,15 @@ export function alertCount(guildId: string): number {
  * Appends one change to a guild's audit trail.
  *
  * @param entry `id` and `at` are filled in here, so a caller only describes what happened.
- * @returns Nothing. Every call is a new entry, and the oldest are dropped past the cap.
+ * @returns Nothing. Every call is a new entry, the oldest are dropped past the cap, and an
+ *          over-long `detail` is stored truncated.
  */
 export function saveAudit(guildId: string, entry: Omit<AuditEntry, 'id' | 'at'>): void {
     const entries = readAudit(guildId);
-    entries.push({ ...entry, id: randomUUID(), at: new Date().toISOString() });
+    const detail  = entry.detail.length > MAX_AUDIT_DETAIL
+        ? `${entry.detail.slice(0, MAX_AUDIT_DETAIL)}...`
+        : entry.detail;
+    entries.push({ ...entry, detail, id: randomUUID(), at: new Date().toISOString() });
     writeAudit(guildId, entries.slice(-MAX_AUDIT));
 }
 

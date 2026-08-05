@@ -35,7 +35,8 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         throw new Error('The configured poll channel is not a guild text channel.');
     }
 
-    const size = Math.max(parseInt(getConfig(guildId, 'poll_size'), 10) || 5, 1);
+    const size    = Math.max(parseInt(getConfig(guildId, 'poll_size'), 10) || 5, 1);
+    const message = getConfig(guildId, 'poll_message');
 
     let games:    Game[];
     let recording = false;
@@ -56,13 +57,17 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
 
     try {
         await channel.send({
-            content: 'Weekly Game Vote -- pick what we\'re playing this week!',
+            // Cleared message means the poll posts on its own, and Discord rejects empty content.
+            ...(message ? { content: message } : {}),
             poll: {
                 question:         { text: 'Which game should we play this week?' },
                 answers:          games.map(g => ({ text: answerText(g) })),
                 duration:         parseInt(getConfig(guildId, 'poll_duration_hours'), 10),
                 allowMultiselect: true,
             },
+            // The message is manager-authored free text: roles and @everyone are the point, but
+            // a stray @user must never notify an individual.
+            allowedMentions: { parse: ['everyone', 'roles'] },
         });
     } catch (err) {
         log.error('Poll post failed', { guild: guildId, channel: channelId, err });

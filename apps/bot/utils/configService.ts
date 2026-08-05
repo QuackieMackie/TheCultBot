@@ -1,5 +1,5 @@
 import { Client, ChannelType, PermissionFlagsBits } from 'discord.js';
-import { getConfig, setConfig } from '@thecult/shared';
+import { getConfig, setConfig, MAX_POLL_MESSAGE_LENGTH } from '@thecult/shared';
 import { ensureBoardMessageForGuild } from 'utils/roleBoard';
 
 const TEXT_CHANNEL_TYPES: ChannelType[] = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
@@ -11,8 +11,12 @@ const EDITABLE_KEYS = new Set([
     'poll_hour_utc',
     'poll_duration_hours',
     'poll_auto_enabled',
+    'poll_message',
     'role_board_channel_id',
 ]);
+
+const EVERYONE_OR_HERE = /@(everyone|here)/;
+const ROLE_MENTION     = /<@&(\d+)>/g;
 
 function intInRange(value: string, min: number, max: number, label: string): string {
     const n = Number(value);
@@ -38,6 +42,40 @@ async function assertGuildTextChannel(client: Client, guildId: string, channelId
     if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms.has(PermissionFlagsBits.SendMessages)) {
         throw new Error(`I cannot post in #${channel.name}. Give my role View Channel and Send Messages there, then try again.`);
     }
+}
+
+/**
+ * Describes the pings in a poll message that would post as plain text.
+ *
+ * @returns A sentence to append to a success message, or an empty string when every ping will
+ *          fire. Checked against the poll channel, since Mention Everyone is granted per
+ *          channel; an unset or unreachable channel yields no warning rather than a guess.
+ */
+async function describeUndeliverableMentions(client: Client, guildId: string, message: string): Promise<string> {
+    const roleIds = [...message.matchAll(ROLE_MENTION)].map(m => m[1]);
+    const wide    = EVERYONE_OR_HERE.test(message);
+    if (!wide && roleIds.length === 0) return '';
+
+    const channelId = getConfig(guildId, 'poll_channel_id');
+    if (!channelId) return '';
+
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || channel.isDMBased() || !channel.isTextBased()) return '';
+
+    const me = channel.guild.members.me ?? await channel.guild.members.fetchMe().catch(() => null);
+    if (!me || channel.permissionsFor(me)?.has(PermissionFlagsBits.MentionEveryone)) return '';
+
+    const blocked: string[] = [];
+    if (wide) blocked.push('@everyone or @here');
+    for (const id of roleIds) {
+        // A role flagged mentionable pings without the permission, so only the rest are a problem.
+        const role = await channel.guild.roles.fetch(id).catch(() => null);
+        if (role && !role.mentionable) blocked.push(`@${role.name}`);
+    }
+    if (blocked.length === 0) return '';
+
+    return ` I cannot ping ${blocked.join(', ')} in #${channel.name}, so that will post as plain text.`
+        + ' Give my role "Mention @everyone, @here and All Roles" there to fix it.';
 }
 
 async function assertGuildRole(client: Client, guildId: string, roleId: string): Promise<void> {
@@ -72,6 +110,14 @@ export async function applyConfigChange(client: Client, guildId: string, key: st
             const on = rawValue === 'true';
             setConfig(guildId, key, on ? 'true' : 'false');
             return on ? 'Automatic weekly polls enabled.' : 'Automatic weekly polls disabled.';
+        }
+        case 'poll_message': {
+            if (rawValue.length > MAX_POLL_MESSAGE_LENGTH) {
+                throw new Error(`The poll message must be ${MAX_POLL_MESSAGE_LENGTH} characters or fewer.`);
+            }
+            setConfig(guildId, key, rawValue);
+            if (!rawValue) return 'Poll message cleared. Polls will post on their own.';
+            return `Poll message updated.${await describeUndeliverableMentions(client, guildId, rawValue)}`;
         }
         case 'manager_role_id': {
             await assertGuildRole(client, guildId, rawValue);
@@ -113,6 +159,7 @@ export function readConfigSnapshot(guildId: string) {
         poll_hour_utc:         getConfig(guildId, 'poll_hour_utc'),
         poll_duration_hours:   getConfig(guildId, 'poll_duration_hours'),
         poll_auto_enabled:     getConfig(guildId, 'poll_auto_enabled'),
+        poll_message:          getConfig(guildId, 'poll_message'),
         role_board_channel_id: getConfig(guildId, 'role_board_channel_id'),
         role_board_message_id: getConfig(guildId, 'role_board_message_id'),
     };

@@ -18,5 +18,5 @@
     title="The weekly rite"
     lede="When the poll is drawn, where it lands, and how long it stays open."
 >
-    <PollRite config={data.config} {textChannels} games={data.games} />
+    <PollRite config={data.config} {textChannels} games={data.games} roles={data.roles} />
 </Panel>

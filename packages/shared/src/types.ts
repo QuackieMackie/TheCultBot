@@ -50,6 +50,7 @@ export interface StoredConfig {
     poll_hour_utc:         string;
     poll_duration_hours:   string;
     poll_auto_enabled:     string;
+    poll_message:          string;
     role_board_channel_id: string;
     role_board_message_id: string;
     [key: string]:         string;

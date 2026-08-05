@@ -1,18 +1,40 @@
 <script lang="ts">
     import { enhance } from '$app/forms';
     import ConfigField from './ConfigField.svelte';
-    import type { ChannelSummary } from '$lib/types';
+    import type { ChannelSummary, RoleSummary } from '$lib/types';
     import type { Game } from '@thecult/shared';
 
     interface Props {
         config: Record<string, string>;
         textChannels: ChannelSummary[];
         games: Game[];
+        roles: RoleSummary[];
     }
-    let { config, textChannels, games }: Props = $props();
+    let { config, textChannels, games, roles }: Props = $props();
 
     let pollMode = $state('weighted');
     const pickOpen = $derived(pollMode === 'pick');
+
+    // Mirrors MAX_POLL_MESSAGE_LENGTH. Importing it would drag @thecult/shared, and the node
+    // builtins storage.ts pulls in, into the client bundle. The bot validates authoritatively.
+    const MAX_MESSAGE = 2000;
+
+    let messageBox: HTMLTextAreaElement;
+
+    // A named role only pings when written as its raw <@&id> token, which nobody should have to
+    // type, so the picker splices one in at the cursor and resets itself.
+    function insertMention(event: Event) {
+        const picker = event.currentTarget as HTMLSelectElement;
+        const token = picker.value;
+        picker.selectedIndex = 0;
+        if (!token) return;
+
+        const from = messageBox.selectionStart;
+        const to = messageBox.selectionEnd;
+        messageBox.value = messageBox.value.slice(0, from) + token + messageBox.value.slice(to);
+        messageBox.focus();
+        messageBox.selectionStart = messageBox.selectionEnd = from + token.length;
+    }
 </script>
 
 <div class="settings">
@@ -48,6 +70,36 @@
             <input id="poll_dur" name="value" type="number" min="1" max="168" value={config.poll_duration_hours || '24'} />
         {/snippet}
     </ConfigField>
+
+    <div class="wide">
+        <ConfigField
+            key="poll_message"
+            id="poll_msg"
+            label="Message above the poll"
+            hint="Posted with the poll. @everyone and @here work as typed; use the picker for a role. Leave it empty to post the poll on its own."
+        >
+            {#snippet control()}
+                <div class="message">
+                    <textarea
+                        id="poll_msg"
+                        name="value"
+                        rows="3"
+                        maxlength={MAX_MESSAGE}
+                        bind:this={messageBox}
+                        value={config.poll_message ?? ''}
+                    ></textarea>
+                    <select aria-label="Insert a mention" onchange={insertMention}>
+                        <option value="">Insert a mention...</option>
+                        <option value="@everyone">@everyone</option>
+                        <option value="@here">@here</option>
+                        {#each roles as r (r.id)}
+                            <option value={`<@&${r.id}>`}>@{r.name}</option>
+                        {/each}
+                    </select>
+                </div>
+            {/snippet}
+        </ConfigField>
+    </div>
 </div>
 
 <form class="summon" method="POST" action="?/runPoll" use:enhance>
@@ -77,6 +129,10 @@
 </form>
 
 <style>
+    .wide { grid-column: 1 / -1; }
+    .message { flex: 1; min-width: 0; display: grid; gap: 8px; }
+    .message select { max-width: 260px; }
+
     .summon { margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--line); display: grid; gap: 8px; max-width: 520px; }
     .summon > label { font-size: 12px; letter-spacing: 0.04em; color: var(--bone-dim); }
 

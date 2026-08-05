@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, MessageFlags, ChatInputCommandInteraction, Client, GuildMember } from 'discord.js';
-import { getConfig } from '@thecult/shared';
+import { getConfig, MAX_POLL_MESSAGE_LENGTH } from '@thecult/shared';
 import { hasManagerAccess } from 'utils/permissions';
 import { applyConfigChange } from 'utils/configService';
 import { actorOf, recordAudit } from 'utils/audit';
@@ -54,6 +54,13 @@ const command: CommandModule = {
                 .setDescription('Whether the poll fires automatically each Monday')
                 .setRequired(true)))
         .addSubcommand(sub => sub
+            .setName('poll-message')
+            .setDescription('Set the message posted above the poll')
+            .addStringOption(opt => opt
+                .setName('message')
+                .setDescription('Message text, may tag @everyone or a role. Leave empty to post the poll on its own.')
+                .setMaxLength(MAX_POLL_MESSAGE_LENGTH)))
+        .addSubcommand(sub => sub
             .setName('manager-role')
             .setDescription('Set the role that can manage the game roster')
             .addRoleOption(opt => opt
@@ -90,6 +97,7 @@ const command: CommandModule = {
             const duration   = getConfig(guildId, 'poll_duration_hours');
             const boardId    = getConfig(guildId, 'role_board_channel_id');
             const autoOn     = getConfig(guildId, 'poll_auto_enabled') === 'true';
+            const message    = getConfig(guildId, 'poll_message');
             return interaction.reply({
                 content: [
                     '**Current Config**',
@@ -100,7 +108,10 @@ const command: CommandModule = {
                     `Poll size: ${size} games`,
                     `Poll time: ${hour}:00 UTC every Monday`,
                     `Poll duration: ${duration} hours`,
+                    // Fenced so mention tokens show verbatim and can be copied back into an edit.
+                    `Poll message: ${message ? `\n\`\`\`\n${message}\n\`\`\`` : '_none_'}`,
                 ].join('\n'),
+                allowedMentions: { parse: [] },
                 flags: MessageFlags.Ephemeral,
             });
         }
@@ -113,7 +124,8 @@ const command: CommandModule = {
             const message = await applyConfigChange(client, guildId, change.key, change.value);
             log.info('Config changed', { guild: guildId, key: change.key, value: change.value, by: interaction.user.username });
             recordAudit(guildId, actorOf(interaction), 'config.set', change.key, change.value || '(cleared)', 'command');
-            return interaction.editReply({ content: message });
+            // The poll-message warning quotes the mentions it is warning about.
+            return interaction.editReply({ content: message, allowedMentions: { parse: [] } });
         } catch (err) {
             log.error('Config change failed', { guild: guildId, key: change.key, err });
             const message = err instanceof Error ? err.message : 'An error occurred.';
@@ -129,6 +141,7 @@ function resolveChange(sub: string, interaction: ChatInputCommandInteraction): {
         case 'poll-time':          return { key: 'poll_hour_utc',         value: String(interaction.options.getInteger('hour', true)) };
         case 'poll-duration':      return { key: 'poll_duration_hours',   value: String(interaction.options.getInteger('hours', true)) };
         case 'poll-auto':          return { key: 'poll_auto_enabled',     value: interaction.options.getBoolean('enabled', true) ? 'true' : 'false' };
+        case 'poll-message':       return { key: 'poll_message',          value: interaction.options.getString('message') ?? '' };
         case 'manager-role':       return { key: 'manager_role_id',       value: interaction.options.getRole('role', true).id };
         case 'role-board-channel': return { key: 'role_board_channel_id', value: interaction.options.getChannel('channel', true).id };
         default:                   return null;
