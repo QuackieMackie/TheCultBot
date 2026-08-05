@@ -7,7 +7,6 @@
 </script>
 
 {#if !data.user}
-    <!-- Logged-out hero: the seal is the thesis. -->
     <section class="hero">
         <Seal size={168} label="C" />
         <p class="eyebrow">Congregation management</p>

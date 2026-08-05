@@ -2,6 +2,7 @@
     import { untrack } from 'svelte';
     import { enhance } from '$app/forms';
     import Field from './Field.svelte';
+    import type { SubmitFunction } from '@sveltejs/kit';
     import type { ChannelSummary, RoleSummary } from '$lib/types';
     import type { Group } from '@thecult/shared';
 
@@ -11,8 +12,10 @@
         voiceChannels: ChannelSummary[];
         roles: RoleSummary[];
         claimed: Record<string, string>;
+        /** Called after every submission with whether the bot accepted it. */
+        onDone?: (ok: boolean) => void;
     }
-    let { groups, textChannels, voiceChannels, roles, claimed }: Props = $props();
+    let { groups, textChannels, voiceChannels, roles, claimed, onDone }: Props = $props();
 
     // Only the opening default: a reload must not yank the dropdown out from under an edit.
     let groupChoice = $state(untrack(() => groups[0]?.name ?? '__new__'));
@@ -40,9 +43,14 @@
                 ? 'Pick a text channel first. The voice list then narrows to its category, since both channels must share one.'
                 : 'Adopts these channels as they are: no messages, permissions, or names are touched. Only the role is created, and only if you asked for one.'
     );
+
+    const submit: SubmitFunction = () => async ({ result, update }) => {
+        await update();
+        onDone?.(result.type === 'success');
+    };
 </script>
 
-<form class="add-game" method="POST" action={formAction} use:enhance>
+<form class="add-game" method="POST" action={formAction} use:enhance={submit}>
     <div class="settings add-core">
         <Field id="g_name" label="Game name">
             {#snippet control()}

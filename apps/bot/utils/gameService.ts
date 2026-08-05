@@ -41,9 +41,7 @@ interface AddGameResult {
 }
 
 // Full equivalent of `/game add`: joins an existing group, revives a quarantined one, or
-// creates a brand-new group (role + category + text/voice channels). The new-group path
-// requires the live guild, so this always runs on the bot. Both the slash command and the
-// internal API route through here, so the group lifecycle lives in one place.
+// creates a brand-new group (role + category + text/voice channels).
 export async function addGame(guild: Guild, input: AddGameInput): Promise<AddGameResult> {
     const guildId   = guild.id;
     const name      = input.name.trim();
@@ -322,8 +320,7 @@ interface RemoveResult {
 
 /**
  * Removes a game. If it was the last game in its group, the group's channels are archived and
- * its role deleted. Needs the live guild for the Discord side-effect, which is why removal is
- * routed through the bot. Both the slash command and the internal API call this.
+ * its role deleted.
  *
  * @param name Matched case-insensitively.
  * @param by   Who asked for the removal, for the log line.

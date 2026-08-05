@@ -5,11 +5,9 @@ import type { Alert, AuditEntry, Game, Group, StoredConfig } from './types';
 
 export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.resolve(process.cwd(), 'data');
 
-// Discord caps poll answer text at 55 characters, so a game name longer than
+// Discord caps poll answer text at 55 characters, so a longer name could never be polled.
 export const MAX_GAME_NAME_LENGTH = 55;
 
-// Never-polled games get this pseudo "weeks since last poll" so they are the most
-// likely to be featured; recently featured games decay towards a weight of 1.
 const WEIGHT_CAP = 8;
 
 // Oldest alerts are dropped past this, so a guild that ignores its dashboard cannot grow the
@@ -206,8 +204,8 @@ function normaliseAudit(raw: Partial<AuditEntry>): AuditEntry {
     };
 }
 
-// Like readAlerts, this never seeds a missing file: the dashboard reads the trail from a
-// read-only mount, so a guild that predates audit.json must not trigger a write on read.
+// Never seeds a missing file: the dashboard reads the trail from a read-only mount, so a
+// guild that predates audit.json must not trigger a write on read.
 function readAudit(guildId: string): AuditEntry[] {
     return readJsonFile(auditFile(guildId), raw => {
         const arr = JSON.parse(raw) as unknown;
@@ -251,7 +249,7 @@ export function initGuildStorage(guildId: string): void {
     }
 }
 
-// Removes a guild's entire data directory. Called when the bot is kicked/leaves.
+// Removes a guild's entire data directory, so leaving a server takes its data with it.
 export function purgeGuildStorage(guildId: string): void {
     fs.rmSync(guildDir(guildId), { recursive: true, force: true });
 }
@@ -453,14 +451,14 @@ export function saveAlert(guildId: string, alert: { key: string; scope: string; 
     writeAlerts(guildId, alerts.slice(-MAX_ALERTS));
 }
 
-// Drops the alert for a condition that has started working again.
+// Call once the condition behind the alert works again.
 export function clearAlert(guildId: string, key: string): void {
     const alerts = readAlerts(guildId);
     const kept   = alerts.filter(a => a.key !== key);
     if (kept.length !== alerts.length) writeAlerts(guildId, kept);
 }
 
-// Removes one alert by id. Returns false if it was already gone.
+// Returns false if the alert was already gone.
 export function dismissAlert(guildId: string, id: string): boolean {
     const alerts = readAlerts(guildId);
     const kept   = alerts.filter(a => a.id !== id);
