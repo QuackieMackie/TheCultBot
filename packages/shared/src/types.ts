@@ -6,6 +6,28 @@ export interface Game {
     playerCount: number;
     lastPolledAt?:   string;
     pollAppearances: number;
+    pollWins:        number;
+}
+
+export interface PollRunAnswer {
+    game:     string;
+    answerId: number;
+    votes:    number;
+    // Ids of the members who picked this answer. Empty when the voter list could not be read,
+    // which is why `votes` is stored separately rather than derived from the length.
+    voters:   string[];
+}
+
+export interface PollRun {
+    id:        string;
+    messageId: string;
+    channelId: string;
+    postedAt:  string;
+    closesAt:  string;
+    recordedAt?: string;
+    abandoned?:  boolean;
+    answers:     PollRunAnswer[];
+    winners:     string[];
 }
 
 export interface Group {

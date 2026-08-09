@@ -2,15 +2,17 @@ import cron, { ScheduledTask } from 'node-cron';
 import { Client } from 'discord.js';
 import { getConfig } from '@thecult/shared';
 import { runWeeklyPoll } from 'utils/pollRunner';
+import { sweepClosedPolls } from 'utils/pollResults';
 import { ALERT_WEEKLY_POLL, raiseAlert, resolveAlert } from 'utils/alerts';
 import { logger } from 'utils/logger';
 
 const log = logger('scheduler');
 
-let task: ScheduledTask | null = null;
+let pollTask:    ScheduledTask | null = null;
+let resultsTask: ScheduledTask | null = null;
 
 export function startScheduler(client: Client): void {
-    task = cron.schedule('0 * * * 1', () => {
+    pollTask = cron.schedule('0 * * * 1', () => {
         const hour = new Date().getUTCHours();
         for (const guildId of client.guilds.cache.keys()) {
             if (getConfig(guildId, 'poll_auto_enabled') !== 'true') continue;
@@ -26,10 +28,18 @@ export function startScheduler(client: Client): void {
         }
     }, { timezone: 'UTC' });
 
-    log.info('Scheduler started, checking hourly on Mondays (UTC) for guilds due a poll.');
+    // Its own tick rather than the Monday cron above: a poll runs for a configurable number of
+    // hours, so it usually closes on a day the weekly cron never fires.
+    resultsTask = cron.schedule('*/15 * * * *', () => {
+        sweepClosedPolls(client).catch(err => log.error('Poll result sweep failed', { err }));
+    }, { timezone: 'UTC' });
+
+    log.info('Scheduler started, checking hourly on Mondays (UTC) for guilds due a poll, and every 15 minutes for closed polls.');
 }
 
 export function stopScheduler(): void {
-    if (task) task.stop();
-    task = null;
+    if (pollTask)    pollTask.stop();
+    if (resultsTask) resultsTask.stop();
+    pollTask    = null;
+    resultsTask = null;
 }

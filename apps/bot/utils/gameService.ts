@@ -57,6 +57,7 @@ export async function addGame(guild: Guild, input: AddGameInput): Promise<AddGam
         group:           groupName,
         playerCount:     input.playerCount,
         pollAppearances: 0,
+        pollWins:        0,
     };
 
     const existing = getGroupByName(guildId, groupName);
@@ -149,6 +150,7 @@ export async function importGame(guild: Guild, input: ImportGameInput): Promise<
         group:           group.name,
         playerCount:     input.playerCount,
         pollAppearances: 0,
+        pollWins:        0,
     };
     saveNewGame(guildId, record);
 

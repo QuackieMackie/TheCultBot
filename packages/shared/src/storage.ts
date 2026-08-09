@@ -1,7 +1,7 @@
 import fs   from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import type { Alert, AuditEntry, Game, Group, StoredConfig } from './types';
+import type { Alert, AuditEntry, Game, Group, PollRun, PollRunAnswer, StoredConfig } from './types';
 
 export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.resolve(process.cwd(), 'data');
 
@@ -24,6 +24,10 @@ const MAX_AUDIT = 100;
 // Config values can run to MAX_POLL_MESSAGE_LENGTH, so an untruncated detail would let a
 // hundred entries dwarf the rest of a guild's data.
 const MAX_AUDIT_DETAIL = 200;
+
+// Oldest runs are dropped past this, roughly a year of weekly polls. Lifetime totals live on
+// the games themselves, so trimming the history never loses a win.
+const MAX_POLLS = 52;
 
 const CONFIG_DEFAULTS: StoredConfig = {
     poll_size:       '5',
@@ -61,6 +65,10 @@ function auditFile(guildId: string): string {
     return path.join(guildDir(guildId), 'audit.json');
 }
 
+function pollsFile(guildId: string): string {
+    return path.join(guildDir(guildId), 'polls.json');
+}
+
 function writeFileAtomic(file: string, data: string): void {
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, data);
@@ -77,10 +85,9 @@ function quarantineCorruptFile(file: string, raw: string): void {
     }
 }
 
-// Reads and parses a JSON data file. Returns null for a missing file (the caller seeds a
-// default). A file that exists but cannot be parsed is quarantined before returning null, so
-// a transient JSON error never discards good data. Genuine read errors (e.g. permissions)
-// are rethrown rather than treated as "empty".
+// Returns null for a missing file (the caller seeds a default). A file that exists but cannot
+// be parsed is quarantined before returning null, so a transient JSON error never discards
+// good data. Genuine read errors (e.g. permissions) are rethrown rather than treated as "empty".
 function readJsonFile<T>(file: string, parse: (raw: string) => T): T | null {
     let raw: string;
     try {
@@ -107,6 +114,7 @@ function normaliseGame(raw: Partial<Game>): Game {
         playerCount:     typeof raw.playerCount === 'number' ? raw.playerCount : 1,
         lastPolledAt:    raw.lastPolledAt,
         pollAppearances: typeof raw.pollAppearances === 'number' ? raw.pollAppearances : 0,
+        pollWins:        typeof raw.pollWins === 'number' ? raw.pollWins : 0,
     };
 }
 
@@ -226,7 +234,44 @@ function writeAudit(guildId: string, entries: AuditEntry[]): void {
     writeFileAtomic(auditFile(guildId), JSON.stringify(entries, null, 2));
 }
 
-// Ensures the top-level data directory exists. Call once at boot before init-ing guilds.
+function normalisePollAnswer(raw: Partial<PollRunAnswer>): PollRunAnswer {
+    return {
+        game:     raw.game ?? '',
+        answerId: typeof raw.answerId === 'number' ? raw.answerId : 0,
+        votes:    typeof raw.votes === 'number' ? raw.votes : 0,
+        voters:   Array.isArray(raw.voters) ? raw.voters.filter(v => typeof v === 'string') : [],
+    };
+}
+
+function normalisePollRun(raw: Partial<PollRun>): PollRun {
+    return {
+        id:         raw.id ?? randomUUID(),
+        messageId:  raw.messageId ?? '',
+        channelId:  raw.channelId ?? '',
+        postedAt:   raw.postedAt ?? new Date(0).toISOString(),
+        closesAt:   raw.closesAt ?? new Date(0).toISOString(),
+        recordedAt: raw.recordedAt,
+        abandoned:  raw.abandoned ?? false,
+        answers:    Array.isArray(raw.answers) ? raw.answers.map(normalisePollAnswer) : [],
+        winners:    Array.isArray(raw.winners) ? raw.winners.filter(w => typeof w === 'string') : [],
+    };
+}
+
+// Never seeds a missing file: the dashboard reads storage from a read-only mount, so a guild
+// that predates polls.json must not trigger a write on read.
+function readPolls(guildId: string): PollRun[] {
+    return readJsonFile(pollsFile(guildId), raw => {
+        const arr = JSON.parse(raw) as unknown;
+        if (!Array.isArray(arr)) throw new Error('polls.json is not an array');
+        return (arr as Partial<PollRun>[]).map(normalisePollRun);
+    }) ?? [];
+}
+
+function writePolls(guildId: string, runs: PollRun[]): void {
+    writeFileAtomic(pollsFile(guildId), JSON.stringify(runs, null, 2));
+}
+
+// Call once at boot before init-ing guilds.
 export function initStorage(): void {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     console.log('Storage initialised.');
@@ -509,6 +554,74 @@ export function saveAudit(guildId: string, entry: Omit<AuditEntry, 'id' | 'at'>)
 export function listAudit(guildId: string, limit?: number): AuditEntry[] {
     const entries = readAudit(guildId).sort((a, b) => b.at.localeCompare(a.at));
     return limit === undefined ? entries : entries.slice(0, limit);
+}
+
+/**
+ * Records a poll the bot has just posted, so its results can be read once it closes.
+ *
+ * @param run Everything known at post time. `answers` maps each game to the answer id Discord
+ *            assigned it, and `votes` stays 0 until the run is settled.
+ * @returns The new run's id. The oldest runs are dropped past the cap; since runs are appended
+ *          in order, an open run is always among the newest and can never be trimmed away.
+ */
+export function savePollRun(guildId: string, run: Omit<PollRun, 'id'>): string {
+    const runs = readPolls(guildId);
+    const id   = randomUUID();
+    runs.push(normalisePollRun({ ...run, id }));
+    writePolls(guildId, runs.slice(-MAX_POLLS));
+    return id;
+}
+
+// Runs still waiting on their results, oldest first. Empty for a guild that has never polled.
+export function listOpenPollRuns(guildId: string): PollRun[] {
+    return readPolls(guildId).filter(r => !r.recordedAt);
+}
+
+/**
+ * Settles an open run with the vote counts read back from Discord.
+ *
+ * @param answers Vote counts, matched to the run's stored answers by game name.
+ * @param winners Games tied at the top. Each has its lifetime `pollWins` incremented.
+ * @returns Nothing. Does nothing if the run is unknown or already settled, so a sweep that
+ *          runs twice over the same poll cannot double-count a win.
+ */
+export function recordPollOutcome(guildId: string, id: string, answers: PollRunAnswer[], winners: string[]): void {
+    const runs = readPolls(guildId);
+    const run  = runs.find(r => r.id === id);
+    if (!run || run.recordedAt) return;
+
+    run.answers    = answers.map(normalisePollAnswer);
+    run.winners    = winners;
+    run.recordedAt = new Date().toISOString();
+    writePolls(guildId, runs);
+
+    for (const name of winners) {
+        const game = getGameByName(guildId, name);
+        if (game) updateGame(guildId, name, { pollWins: game.pollWins + 1 });
+    }
+}
+
+// Closes an open run without results, so an unreadable poll is not retried forever.
+export function abandonPollRun(guildId: string, id: string): void {
+    const runs = readPolls(guildId);
+    const run  = runs.find(r => r.id === id);
+    if (!run || run.recordedAt) return;
+    run.abandoned  = true;
+    run.recordedAt = new Date().toISOString();
+    writePolls(guildId, runs);
+}
+
+/**
+ * Settled polls with usable results, newest first.
+ *
+ * @param limit Caps how many are returned. Omitted, every stored run comes back.
+ * @returns Abandoned runs are left out, so callers never show a poll whose votes were lost.
+ */
+export function listPollRuns(guildId: string, limit?: number): PollRun[] {
+    const runs = readPolls(guildId)
+        .filter(r => r.recordedAt && !r.abandoned)
+        .sort((a, b) => b.postedAt.localeCompare(a.postedAt));
+    return limit === undefined ? runs : runs.slice(0, limit);
 }
 
 export function getConfig(guildId: string, key: string): string {

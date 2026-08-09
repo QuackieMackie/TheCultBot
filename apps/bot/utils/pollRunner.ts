@@ -1,4 +1,4 @@
-import { Client, Guild } from 'discord.js';
+import { Client, Guild, Message } from 'discord.js';
 import {
     getConfig,
     getRandomGames,
@@ -7,6 +7,7 @@ import {
     getGameByName,
     getGroupByName,
     pickWeightedGames,
+    savePollRun,
     updateGame,
     MAX_GAME_NAME_LENGTH,
     type Game,
@@ -55,8 +56,9 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         if (games.length === 0) throw new Error('No valid games found in the roster.');
     }
 
+    let sent: Message;
     try {
-        await channel.send({
+        sent = await channel.send({
             // Cleared message means the poll posts on its own, and Discord rejects empty content.
             ...(message ? { content: message } : {}),
             poll: {
@@ -79,9 +81,38 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         for (const g of games) {
             updateGame(guildId, g.name, { lastPolledAt: now, pollAppearances: g.pollAppearances + 1 });
         }
+        trackPollRun(guildId, sent, games, now);
     }
 
     log.info('Weekly poll posted', { guild: guildId, channel: channelId, games: games.length, recording });
+}
+
+// Records the posted poll so the sweep can read its results back once it closes. The poll is
+// already live by this point, so a failure here is logged and swallowed rather than reported
+// to the caller as a failed poll.
+function trackPollRun(guildId: string, sent: Message, games: Game[], postedAt: string): void {
+    try {
+        const poll = sent.poll;
+        if (!poll) {
+            log.warn('Poll posted without a poll object, results will not be tracked', { guild: guildId, message: sent.id });
+            return;
+        }
+
+        // Discord assigns answer ids in the order the answers were sent, so position maps a
+        // game to its id.
+        const answerIds = [...poll.answers.keys()];
+
+        savePollRun(guildId, {
+            messageId: sent.id,
+            channelId: sent.channelId,
+            postedAt,
+            closesAt:  (poll.expiresAt ?? new Date()).toISOString(),
+            answers:   games.map((g, i) => ({ game: g.name, answerId: answerIds[i], votes: 0, voters: [] })),
+            winners:   [],
+        });
+    } catch (err) {
+        log.error('Could not record the poll for result tracking', { guild: guildId, message: sent.id, err });
+    }
 }
 
 function resolveNames(guildId: string, names: string[]): Game[] {
@@ -99,7 +130,7 @@ function resolveNames(guildId: string, names: string[]): Game[] {
 }
 
 function shimGame(name: string): Game {
-    return { name, addedBy: '', addedAt: '', group: '', playerCount: 0, pollAppearances: 0 };
+    return { name, addedBy: '', addedAt: '', group: '', playerCount: 0, pollAppearances: 0, pollWins: 0 };
 }
 
 async function selectWeighted(guildId: string, guild: Guild, size: number): Promise<Game[]> {
