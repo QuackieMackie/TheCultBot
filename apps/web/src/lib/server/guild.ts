@@ -15,6 +15,7 @@ export const CONFIG_KEYS = [
     'poll_hour_utc',
     'poll_duration_hours',
     'poll_auto_enabled',
+    'poll_message',
     'role_board_channel_id',
     'role_board_message_id'
 ] as const;
