@@ -25,7 +25,7 @@ const command: CommandModule = {
                 .setRequired(true))
             .addIntegerOption(opt => opt
                 .setName('player-count')
-                .setDescription('Members of the group role needed for this game to enter the auto poll')
+                .setDescription('How many players this game needs, shown next to it in polls')
                 .setMinValue(1)
                 .setRequired(true))
             .addStringOption(opt => opt
@@ -53,7 +53,7 @@ const command: CommandModule = {
                 .setRequired(true))
             .addIntegerOption(opt => opt
                 .setName('player-count')
-                .setDescription('Members of the group role needed for this game to enter the auto poll')
+                .setDescription('How many players this game needs, shown next to it in polls')
                 .setMinValue(1)
                 .setRequired(true))
             .addChannelOption(opt => opt

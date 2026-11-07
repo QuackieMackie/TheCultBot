@@ -1,11 +1,12 @@
-import { Client, Guild, Message } from 'discord.js';
+import { Client, Message } from 'discord.js';
 import {
     getConfig,
     getRandomGames,
     gameCount,
     getActiveGames,
     getGameByName,
-    getGroupByName,
+    getLastWins,
+    getRestedGames,
     pickWeightedGames,
     savePollRun,
     updateGame,
@@ -48,9 +49,9 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         kind  = 'pick';
         if (games.length === 0) throw new Error('No valid games were provided for the poll.');
     } else if (opts.weighted) {
-        games = await selectWeighted(guildId, channel.guild, size);
+        games = selectWeighted(guildId, size);
         kind  = 'weighted';
-        if (games.length === 0) throw new Error('No games currently qualify for the poll: not enough interested members.');
+        if (games.length === 0) throw new Error('No active games to poll. Add some with `/game add`.');
     } else {
         const total = gameCount(guildId);
         if (total === 0) throw new Error('No games in the roster. Add some with `/game add`.');
@@ -139,23 +140,20 @@ function shimGame(name: string): Game {
     return { name, addedBy: '', addedAt: '', group: '', playerCount: 0, pollAppearances: 0, pollWins: 0 };
 }
 
-async function selectWeighted(guildId: string, guild: Guild, size: number): Promise<Game[]> {
-    await guild.members.fetch();
-    const active    = getActiveGames(guildId);
-    const qualified = active.filter(game => {
-        const group = getGroupByName(guildId, game.group);
-        if (!group || !group.roleId) {
-            log.debug('Game skipped, group has no role', { guild: guildId, game: game.name, group: game.group });
-            return false;
-        }
-        const role    = guild.roles.cache.get(group.roleId);
-        const members = role?.members.size ?? 0;
-        log.debug('Game weighed', { guild: guildId, game: game.name, members, needed: game.playerCount });
-        return members >= game.playerCount;
-    });
+function selectWeighted(guildId: string, size: number): Game[] {
+    const active = getActiveGames(guildId);
+    const rested = getRestedGames(guildId);
+    const draw   = pickWeightedGames(active, size, getLastWins(guildId), rested);
 
-    log.info('Weighted selection', { guild: guildId, active: active.length, qualified: qualified.length, picking: size });
-    return pickWeightedGames(qualified, size);
+    log.info('Weighted selection', {
+        guild:    guildId,
+        active:   active.length,
+        size,
+        rested:   [...rested].join(', '),
+        toppedUp: draw.toppedUp,
+        picked:   draw.picked.map(p => `${p.game.name}:${p.weight}`).join(', '),
+    });
+    return draw.picked.map(p => p.game);
 }
 
 function answerText(game: Game): string {

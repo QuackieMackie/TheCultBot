@@ -30,7 +30,9 @@ export const MAX_GAME_NAME_LENGTH = 55;
 // Discord caps message content at 2000 characters.
 export const MAX_POLL_MESSAGE_LENGTH = 2000;
 
-const WEIGHT_CAP = 8;
+const WEIGHT_CAP = 12;
+const REST_POLLS = 2;
+const WEEK_MS    = 7 * 24 * 60 * 60 * 1000;
 
 // Oldest alerts are dropped past this, so a guild that ignores its dashboard cannot grow the
 // table without bound.
@@ -143,11 +145,16 @@ export function updateGame(guildId: string, name: string, patch: Partial<Game>):
     if (!game) return;
 
     const next = { ...game, ...patch };
-    openGuildDb(guildId).prepare(`
-        UPDATE games
-        SET name = ?, added_by = ?, added_at = ?, group_name = ?, player_count = ?, last_polled_at = ?, poll_appearances = ?, poll_wins = ?
-        WHERE name = ?
-    `).run(next.name, next.addedBy, next.addedAt, next.group, next.playerCount, next.lastPolledAt ?? null, next.pollAppearances, next.pollWins, game.name);
+    const db   = openGuildDb(guildId);
+    db.transaction(() => {
+        db.prepare(`
+            UPDATE games
+            SET name = ?, added_by = ?, added_at = ?, group_name = ?, player_count = ?, last_polled_at = ?, poll_appearances = ?, poll_wins = ?
+            WHERE name = ?
+        `).run(next.name, next.addedBy, next.addedAt, next.group, next.playerCount, next.lastPolledAt ?? null, next.pollAppearances, next.pollWins, game.name);
+        // The draw finds a game's last win by name, so a rename must carry its history along.
+        if (next.name !== game.name) db.prepare('UPDATE poll_answers SET game = ? WHERE game = ? COLLATE NOCASE').run(next.name, game.name);
+    })();
 }
 
 export function deleteGame(guildId: string, name: string): number {
@@ -183,13 +190,47 @@ export function getRandomGames(guildId: string, n: number): Game[] {
     return games.slice(0, n);
 }
 
-// Weighted random selection without replacement. Weight = weeks since the game last
-// appeared in an auto poll (never-polled games get WEIGHT_CAP), so recently featured
-// games are unlikely and un-featured games rise back to the top over time.
-export function pickWeightedGames(pool: Game[], n: number): Game[] {
-    const now       = Date.now();
-    const remaining = pool.map(game => ({ game, weight: pollWeight(game, now) }));
-    const picked:   Game[] = [];
+export interface DrawnGame {
+    game:   Game;
+    weight: number;
+}
+
+export interface PollDraw {
+    picked:   DrawnGame[];
+    toppedUp: number;
+}
+
+// Read from poll history rather than stored on the game, so corrected results apply automatically.
+export function getLastWins(guildId: string): Map<string, string> {
+    const rows = openGuildDb(guildId).prepare(`
+        SELECT a.game, p.posted_at
+        FROM poll_answers a JOIN polls p ON p.id = a.poll_id
+        WHERE a.is_winner = 1 AND p.abandoned = 0
+    `).all() as { game: string; posted_at: string }[];
+
+    const wins = new Map<string, string>();
+    for (const row of rows) {
+        const key = row.game.toLowerCase();
+        if (!wins.has(key) || wins.get(key)! < row.posted_at) wins.set(key, row.posted_at);
+    }
+    return wins;
+}
+
+export function getRestedGames(guildId: string): Set<string> {
+    return new Set(listPollRuns(guildId, REST_POLLS).flatMap(run => run.winners.map(name => name.toLowerCase())));
+}
+
+function drawWeight(game: Game, lastWins: Map<string, string>, newestBallot: string | undefined, now: number): number {
+    const lastWin = lastWins.get(game.name.toLowerCase());
+    const weeks   = lastWin ? Math.floor((now - new Date(lastWin).getTime()) / WEEK_MS) : WEIGHT_CAP;
+    const weight  = Math.min(Math.max(weeks, 1), WEIGHT_CAP);
+    // Halved so a game with no wins cannot sit on every ballot.
+    return newestBallot && game.lastPolledAt === newestBallot ? weight / 2 : weight;
+}
+
+function drawFrom(entries: DrawnGame[], n: number): DrawnGame[] {
+    const remaining = [...entries];
+    const picked:   DrawnGame[] = [];
 
     while (picked.length < n && remaining.length > 0) {
         const total = remaining.reduce((sum, e) => sum + e.weight, 0);
@@ -199,17 +240,23 @@ export function pickWeightedGames(pool: Game[], n: number): Game[] {
             roll -= remaining[i].weight;
             if (roll <= 0) { idx = i; break; }
         }
-        picked.push(remaining[idx].game);
+        picked.push(remaining[idx]);
         remaining.splice(idx, 1);
     }
 
     return picked;
 }
 
-function pollWeight(game: Game, now: number): number {
-    if (!game.lastPolledAt) return WEIGHT_CAP;
-    const weeks = Math.floor((now - new Date(game.lastPolledAt).getTime()) / (7 * 24 * 60 * 60 * 1000));
-    return Math.min(Math.max(weeks, 1), WEIGHT_CAP);
+export function pickWeightedGames(pool: Game[], n: number, lastWins: Map<string, string>, rested: Set<string>): PollDraw {
+    const now          = Date.now();
+    const newestBallot = pool.reduce<string | undefined>((newest, g) => (g.lastPolledAt && (!newest || g.lastPolledAt > newest) ? g.lastPolledAt : newest), undefined);
+    const entries      = pool.map(game => ({ game, weight: drawWeight(game, lastWins, newestBallot, now) }));
+    const isRested     = (e: DrawnGame) => rested.has(e.game.name.toLowerCase());
+
+    const picked = drawFrom(entries.filter(e => !isRested(e)), n);
+    // A big tie can rest most of the roster, and the ballot must not come up short.
+    const extras = drawFrom(entries.filter(isRested), n - picked.length);
+    return { picked: [...picked, ...extras], toppedUp: extras.length };
 }
 
 export function gameCount(guildId: string): number {
