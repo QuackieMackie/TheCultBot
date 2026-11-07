@@ -13,3 +13,6 @@ build/
 
 # Runtime data
 data/
+
+# Holds Discord user ids
+live_logs/
