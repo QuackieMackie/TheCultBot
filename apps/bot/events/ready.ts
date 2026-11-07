@@ -1,6 +1,6 @@
 import { Events, Client, REST, Routes } from 'discord.js';
 import { ensureBoardMessage } from 'utils/roleBoard';
-import { sweepClosedPolls } from 'utils/pollResults';
+import { resyncPollHistory, sweepClosedPolls } from 'utils/pollResults';
 import { initGuildStorage } from '@thecult/shared';
 import { logger } from 'utils/logger';
 import type { EventModule, CommandModule } from 'types';
@@ -24,6 +24,9 @@ const event: EventModule = {
         // Catches polls that closed while the bot was down, which the 15 minute tick alone
         // would leave unsettled until it next fired.
         await sweepClosedPolls(client).catch(err => log.error('Poll result sweep failed', { err }));
+
+        // Not awaited: it makes many rate-limited calls.
+        resyncPollHistory(client).catch(err => log.error('Poll history resync failed', { err }));
 
         if (!process.env.CLIENT_ID) {
             log.warn('Missing CLIENT_ID in env, skipping command sync.');

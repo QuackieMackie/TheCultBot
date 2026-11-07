@@ -12,9 +12,10 @@ import { logger } from 'utils/logger';
 
 const log = logger('alerts');
 
-export const ALERT_ROLE_BOARD   = 'role_board_post';
-export const ALERT_WEEKLY_POLL  = 'weekly_poll';
-export const ALERT_POLL_RESULTS = 'poll_results';
+export const ALERT_ROLE_BOARD    = 'role_board_post';
+export const ALERT_WEEKLY_POLL   = 'weekly_poll';
+export const ALERT_POLL_RESULTS  = 'poll_results';
+export const ALERT_POLL_ANNOUNCE = 'poll_announce';
 
 // Suffixed with the group name, so two groups failing to archive stay two separate alerts.
 export const ALERT_GROUP_QUARANTINE = 'group_quarantine';
