@@ -11,6 +11,7 @@ import {
     updateGame,
     MAX_GAME_NAME_LENGTH,
     type Game,
+    type PollKind,
 } from '@thecult/shared';
 import { describeDiscordError } from 'utils/alerts';
 import { logger } from 'utils/logger';
@@ -39,20 +40,22 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
     const size    = Math.max(parseInt(getConfig(guildId, 'poll_size'), 10) || 5, 1);
     const message = getConfig(guildId, 'poll_message');
 
-    let games:    Game[];
-    let recording = false;
+    let games: Game[];
+    let kind:  PollKind;
 
     if (opts.gameNames && opts.gameNames.length > 0) {
         games = resolveNames(guildId, opts.gameNames);
+        kind  = 'pick';
         if (games.length === 0) throw new Error('No valid games were provided for the poll.');
     } else if (opts.weighted) {
-        games     = await selectWeighted(guildId, channel.guild, size);
-        recording = true;
+        games = await selectWeighted(guildId, channel.guild, size);
+        kind  = 'weighted';
         if (games.length === 0) throw new Error('No games currently qualify for the poll: not enough interested members.');
     } else {
         const total = gameCount(guildId);
         if (total === 0) throw new Error('No games in the roster. Add some with `/game add`.');
         games = getRandomGames(guildId, Math.min(size, total)).filter(g => g.name?.trim());
+        kind  = 'random';
         if (games.length === 0) throw new Error('No valid games found in the roster.');
     }
 
@@ -76,21 +79,23 @@ export async function runWeeklyPoll(client: Client, guildId: string, opts: PollO
         throw new Error(describeDiscordError(err, channel.name, 'The poll could not be posted to the poll channel.'));
     }
 
-    if (recording) {
-        const now = new Date().toISOString();
+    const now = new Date().toISOString();
+
+    // A manual poll must not affect the rotation.
+    if (kind === 'weighted') {
         for (const g of games) {
             updateGame(guildId, g.name, { lastPolledAt: now, pollAppearances: g.pollAppearances + 1 });
         }
-        trackPollRun(guildId, sent, games, now);
     }
+    trackPollRun(guildId, sent, games, now, kind);
 
-    log.info('Weekly poll posted', { guild: guildId, channel: channelId, games: games.length, recording });
+    log.info('Weekly poll posted', { guild: guildId, channel: channelId, games: games.length, kind });
 }
 
 // Records the posted poll so the sweep can read its results back once it closes. The poll is
 // already live by this point, so a failure here is logged and swallowed rather than reported
 // to the caller as a failed poll.
-function trackPollRun(guildId: string, sent: Message, games: Game[], postedAt: string): void {
+function trackPollRun(guildId: string, sent: Message, games: Game[], postedAt: string, kind: PollKind): void {
     try {
         const poll = sent.poll;
         if (!poll) {
@@ -105,7 +110,7 @@ function trackPollRun(guildId: string, sent: Message, games: Game[], postedAt: s
         savePollRun(guildId, {
             messageId: sent.id,
             channelId: sent.channelId,
-            kind:      'weighted',
+            kind,
             postedAt,
             closesAt:  (poll.expiresAt ?? new Date()).toISOString(),
             answers:   games.map((g, i) => ({ game: g.name, answerId: answerIds[i], votes: 0, voters: [] })),
