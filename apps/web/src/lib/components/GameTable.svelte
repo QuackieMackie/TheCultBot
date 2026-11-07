@@ -7,7 +7,7 @@
 
 <table class="table">
     <thead>
-        <tr><th>Game</th><th class="col-group">Group</th><th class="col-players">Players needed</th><th class="col-actions"></th></tr>
+        <tr><th>Game</th><th class="col-group">Group</th><th class="col-players">Players needed</th><th class="col-stat">Polls</th><th class="col-stat">Wins</th><th class="col-actions"></th></tr>
     </thead>
     <tbody>
         <!-- Inputs sit in their own cells and point back at the row's form by id, since a
@@ -33,6 +33,8 @@
                 <td>
                     <input class="count-input" name="playerCount" type="number" min="1" value={g.playerCount} form="game-{i}" />
                 </td>
+                <td class="mono">{g.pollAppearances}</td>
+                <td class="mono">{g.pollWins}</td>
                 <td>
                     <div class="row-actions">
                         <button class="btn btn-sm btn-ghost" form="game-{i}">Save</button>
@@ -50,6 +52,7 @@
 <style>
     .col-group   { width: 210px; }
     .col-players { width: 120px; }
+    .col-stat    { width: 56px; }
     .col-actions { width: 150px; }
 
     .name-input { width: 100%; font-family: var(--display); font-size: 17px; }

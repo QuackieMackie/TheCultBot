@@ -12,6 +12,7 @@
             : []),
         { href: base,               rune: '◈', label: 'Overview',      count: null,          tone: null },
         { href: base + '/rite',     rune: '☾', label: 'The weekly rite', count: null,        tone: null },
+        { href: base + '/reckoning', rune: '⚖', label: 'The reckoning', count: null,         tone: null },
         { href: base + '/pantheon', rune: '✧', label: 'The pantheon',  count: counts.games,  tone: null },
         { href: base + '/covens',   rune: '❖', label: 'The covens',    count: counts.groups, tone: null },
         { href: base + '/sanctum',  rune: '⛧', label: 'The sanctum',   count: null,          tone: null },
