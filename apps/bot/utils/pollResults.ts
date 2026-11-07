@@ -130,11 +130,13 @@ async function fetchVoters(guildId: string, run: PollRun, answer: PollAnswer | P
 async function fetchPollMessage(client: Client, run: PollRun): Promise<Message | null> {
     const channel = await client.channels.fetch(run.channelId).catch(swallowMissing);
     if (!channel || channel.isDMBased() || !channel.isTextBased()) return null;
-    return channel.messages.fetch(run.messageId).catch(swallowMissing);
+    // Forced because the cached copy never updates without the GuildMessages intent.
+    return channel.messages.fetch({ message: run.messageId, force: true }).catch(swallowMissing);
 }
 
+// Missing Access (50001) is left out because lost permissions can be restored.
 function swallowMissing(err: unknown): null {
-    if (err instanceof DiscordAPIError && (err.code === 10003 || err.code === 10008 || err.code === 50001)) {
+    if (err instanceof DiscordAPIError && (err.code === 10003 || err.code === 10008)) {
         return null;
     }
     throw err;
