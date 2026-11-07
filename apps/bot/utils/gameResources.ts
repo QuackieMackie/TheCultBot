@@ -205,13 +205,13 @@ export async function quarantineGroupResources(guild: Guild, group: Group): Prom
         log.info('Archived category', { guild: guild.id, group: group.name, category: category.id, managerRole: managerRoleId || 'none' });
     }
 
-    let roleDeleted = false;
     if (group.roleId) {
         const role = await guild.roles.fetch(group.roleId).catch(() => null);
-        if (role) roleDeleted = await role.delete('Group quarantined').then(() => true).catch(() => false);
+        // Allowed to throw so the caller keeps the role id.
+        if (role) await role.delete('Group quarantined');
     }
 
-    log.info('Quarantined group resources', { guild: guild.id, group: group.name, role: group.roleId || 'none', roleDeleted });
+    log.info('Quarantined group resources', { guild: guild.id, group: group.name, role: group.roleId || 'none' });
 }
 
 // Re-creates the access role and restores channel visibility for a quarantined group.
