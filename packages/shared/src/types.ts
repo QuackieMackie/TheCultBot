@@ -18,10 +18,14 @@ export interface PollRunAnswer {
     voters:   string[];
 }
 
+// `recovered`: found in channel history, so its original mode is unknown.
+export type PollKind = 'weighted' | 'pick' | 'random' | 'recovered';
+
 export interface PollRun {
     id:        string;
     messageId: string;
     channelId: string;
+    kind:      PollKind;
     postedAt:  string;
     closesAt:  string;
     recordedAt?: string;

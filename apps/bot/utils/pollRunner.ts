@@ -105,6 +105,7 @@ function trackPollRun(guildId: string, sent: Message, games: Game[], postedAt: s
         savePollRun(guildId, {
             messageId: sent.id,
             channelId: sent.channelId,
+            kind:      'weighted',
             postedAt,
             closesAt:  (poll.expiresAt ?? new Date()).toISOString(),
             answers:   games.map((g, i) => ({ game: g.name, answerId: answerIds[i], votes: 0, voters: [] })),

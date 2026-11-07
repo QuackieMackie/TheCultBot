@@ -14,7 +14,9 @@ const event: EventModule = {
         log.info('Logged in', { user: client.user?.tag, guilds: client.guilds.cache.size });
 
         for (const guildId of client.guilds.cache.keys()) {
-            initGuildStorage(guildId);
+            const { imported, importError } = initGuildStorage(guildId);
+            if (imported)    log.info('Imported old JSON data', { guild: guildId, ...imported });
+            if (importError) log.error('Could not import old JSON data', { guild: guildId, err: importError });
         }
 
         await ensureBoardMessage(client).catch(err => log.error('Role board refresh failed', { err }));

@@ -4,7 +4,7 @@
   "description": "Discord bot for managing a game roster and weekly polls",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc",

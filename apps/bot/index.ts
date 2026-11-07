@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import fs   from 'fs';
 import path from 'path';
-import { initStorage } from '@thecult/shared';
+import { closeAllDatabases, initStorage } from '@thecult/shared';
 import { startScheduler } from 'utils/scheduler';
 import { startHeartbeat } from 'utils/health';
 import { startInternalApi } from 'utils/internalApi';
@@ -50,6 +50,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
         log.info('Shutting down', { signal });
         client.destroy();
+        closeAllDatabases();
         process.exit(0);
     });
 }

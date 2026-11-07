@@ -1,17 +1,18 @@
 # Build context is the repo root (see docker-compose.yml).
-FROM node:20.18.1-alpine AS build
+FROM node:22.19.0-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/bot/package.json apps/bot/
 COPY apps/web/package.json apps/web/
-RUN npm ci
+# better-sqlite3 bundles its binaries, so skip npm's compile step.
+RUN npm ci --ignore-scripts
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
 RUN npm run build --workspace @thecult/web
 
-FROM node:20.18.1-alpine AS runtime
+FROM node:22.19.0-alpine AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

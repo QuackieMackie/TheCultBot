@@ -1,9 +1,28 @@
-import fs   from 'fs';
-import path from 'path';
+import fs from 'fs';
 import { randomUUID } from 'crypto';
+import { DATA_DIR, closeGuildDb, guildDir, openGuildDb } from './db';
+import { importLegacyJson, type ImportSummary } from './legacyImport';
+import {
+    groupParams,
+    insertAudit,
+    insertGame,
+    insertGroup,
+    insertPollRun,
+    replacePollAnswers,
+    toAlert,
+    toAudit,
+    toGame,
+    toGroup,
+    toPollRuns,
+    type AlertRow,
+    type AuditRow,
+    type GameRow,
+    type GroupRow,
+    type PollRow,
+} from './rows';
 import type { Alert, AuditEntry, Game, Group, PollRun, PollRunAnswer, StoredConfig } from './types';
 
-export const DATA_DIR = process.env.CULTBOT_DATA_DIR || path.resolve(process.cwd(), 'data');
+export { DATA_DIR, closeAllDatabases } from './db';
 
 // Discord caps poll answer text at 55 characters, so a longer name could never be polled.
 export const MAX_GAME_NAME_LENGTH = 55;
@@ -14,7 +33,7 @@ export const MAX_POLL_MESSAGE_LENGTH = 2000;
 const WEIGHT_CAP = 8;
 
 // Oldest alerts are dropped past this, so a guild that ignores its dashboard cannot grow the
-// file without bound.
+// table without bound.
 const MAX_ALERTS = 25;
 
 // Oldest entries are dropped past this. The trail is a recent history for the dashboard,
@@ -25,9 +44,7 @@ const MAX_AUDIT = 100;
 // hundred entries dwarf the rest of a guild's data.
 const MAX_AUDIT_DETAIL = 200;
 
-// Oldest runs are dropped past this, roughly a year of weekly polls. Lifetime totals live on
-// the games themselves, so trimming the history never loses a win.
-const MAX_POLLS = 52;
+const ALERT_LEGACY_IMPORT = 'legacy_import';
 
 const CONFIG_DEFAULTS: StoredConfig = {
     poll_size:       '5',
@@ -41,270 +58,66 @@ const CONFIG_DEFAULTS: StoredConfig = {
     role_board_message_id: '',
 };
 
-function guildDir(guildId: string): string {
-    return path.join(DATA_DIR, guildId);
-}
-
-function gamesFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'games.json');
-}
-
-function groupsFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'groups.json');
-}
-
-function configFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'config.json');
-}
-
-function alertsFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'alerts.json');
-}
-
-function auditFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'audit.json');
-}
-
-function pollsFile(guildId: string): string {
-    return path.join(guildDir(guildId), 'polls.json');
-}
-
-function writeFileAtomic(file: string, data: string): void {
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, file);
-}
-
-// Preserves an unparseable data file as a timestamped copy before the read path resets it,
-// so a truncated or corrupt file is recoverable instead of being silently overwritten.
-function quarantineCorruptFile(file: string, raw: string): void {
-    try {
-        fs.writeFileSync(`${file}.corrupt-${Date.now()}`, raw);
-    } catch (err) {
-        console.error(`Failed to back up corrupt file ${file}.`, err);
-    }
-}
-
-// Returns null for a missing file (the caller seeds a default). A file that exists but cannot
-// be parsed is quarantined before returning null, so a transient JSON error never discards
-// good data. Genuine read errors (e.g. permissions) are rethrown rather than treated as "empty".
-function readJsonFile<T>(file: string, parse: (raw: string) => T): T | null {
-    let raw: string;
-    try {
-        raw = fs.readFileSync(file, 'utf8');
-    } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-        throw err;
-    }
-    try {
-        return parse(raw);
-    } catch (err) {
-        quarantineCorruptFile(file, raw);
-        console.error(`${path.basename(file)} could not be parsed. Backed it up and reset.`, err);
-        return null;
-    }
-}
-
-function normaliseGame(raw: Partial<Game>): Game {
-    return {
-        name:            raw.name ?? '',
-        addedBy:         raw.addedBy ?? '',
-        addedAt:         raw.addedAt ?? new Date(0).toISOString(),
-        group:           raw.group ?? '',
-        playerCount:     typeof raw.playerCount === 'number' ? raw.playerCount : 1,
-        lastPolledAt:    raw.lastPolledAt,
-        pollAppearances: typeof raw.pollAppearances === 'number' ? raw.pollAppearances : 0,
-        pollWins:        typeof raw.pollWins === 'number' ? raw.pollWins : 0,
-    };
+function byName<T extends { name: string }>(a: T, b: T): number {
+    return a.name.localeCompare(b.name);
 }
 
 function readGames(guildId: string): Game[] {
-    const games = readJsonFile(gamesFile(guildId), raw => {
-        const arr = JSON.parse(raw) as unknown;
-        if (!Array.isArray(arr)) throw new Error('games.json is not an array');
-        return (arr as Partial<Game>[]).map(normaliseGame);
-    });
-    if (games) return games;
-    writeGames(guildId, []);
-    return [];
-}
-
-function writeGames(guildId: string, games: Game[]): void {
-    writeFileAtomic(gamesFile(guildId), JSON.stringify(games, null, 2));
-}
-
-function normaliseGroup(raw: Partial<Group>): Group {
-    return {
-        name:           raw.name ?? '',
-        roleId:         raw.roleId ?? '',
-        roleName:       raw.roleName ?? '',
-        roleColour:     raw.roleColour ?? '',
-        categoryId:     raw.categoryId ?? '',
-        textChannelId:  raw.textChannelId ?? '',
-        voiceChannelId: raw.voiceChannelId ?? '',
-        quarantined:    raw.quarantined ?? false,
-        quarantinedAt:  raw.quarantinedAt,
-        adopted:        raw.adopted ?? false,
-    };
+    const rows = openGuildDb(guildId).prepare('SELECT * FROM games').all() as GameRow[];
+    return rows.map(toGame).sort(byName);
 }
 
 function readGroups(guildId: string): Group[] {
-    const groups = readJsonFile(groupsFile(guildId), raw => {
-        const arr = JSON.parse(raw) as unknown;
-        if (!Array.isArray(arr)) throw new Error('groups.json is not an array');
-        return (arr as Partial<Group>[]).map(normaliseGroup);
-    });
-    if (groups) return groups;
-    writeGroups(guildId, []);
-    return [];
-}
-
-function writeGroups(guildId: string, groups: Group[]): void {
-    writeFileAtomic(groupsFile(guildId), JSON.stringify(groups, null, 2));
-}
-
-function readConfig(guildId: string): StoredConfig {
-    const config = readJsonFile(configFile(guildId), raw => {
-        const obj = JSON.parse(raw) as unknown;
-        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('config.json is not an object');
-        return obj as StoredConfig;
-    });
-    if (config) return config;
-    const defaults = { ...CONFIG_DEFAULTS };
-    writeConfig(guildId, defaults);
-    return defaults;
-}
-
-function writeConfig(guildId: string, config: StoredConfig): void {
-    writeFileAtomic(configFile(guildId), JSON.stringify(config, null, 2));
-}
-
-function normaliseAlert(raw: Partial<Alert>): Alert {
-    const at = raw.lastAt ?? raw.firstAt ?? new Date(0).toISOString();
-    return {
-        id:      raw.id ?? randomUUID(),
-        key:     raw.key ?? '',
-        scope:   raw.scope ?? '',
-        message: raw.message ?? '',
-        detail:  raw.detail ?? '',
-        firstAt: raw.firstAt ?? at,
-        lastAt:  at,
-        count:   typeof raw.count === 'number' ? raw.count : 1,
-    };
-}
-
-// Unlike the other readers this never seeds a missing file: the dashboard reads alerts from a
-// read-only mount, so a guild that predates alerts.json must not trigger a write on read.
-function readAlerts(guildId: string): Alert[] {
-    return readJsonFile(alertsFile(guildId), raw => {
-        const arr = JSON.parse(raw) as unknown;
-        if (!Array.isArray(arr)) throw new Error('alerts.json is not an array');
-        return (arr as Partial<Alert>[]).map(normaliseAlert);
-    }) ?? [];
-}
-
-function writeAlerts(guildId: string, alerts: Alert[]): void {
-    writeFileAtomic(alertsFile(guildId), JSON.stringify(alerts, null, 2));
-}
-
-function normaliseAudit(raw: Partial<AuditEntry>): AuditEntry {
-    return {
-        id:      raw.id ?? randomUUID(),
-        at:      raw.at ?? new Date(0).toISOString(),
-        actorId: raw.actorId ?? '',
-        actor:   raw.actor ?? '',
-        action:  raw.action ?? '',
-        target:  raw.target ?? '',
-        detail:  raw.detail ?? '',
-        source:  raw.source === 'command' ? 'command' : 'dashboard',
-    };
-}
-
-// Never seeds a missing file: the dashboard reads the trail from a read-only mount, so a
-// guild that predates audit.json must not trigger a write on read.
-function readAudit(guildId: string): AuditEntry[] {
-    return readJsonFile(auditFile(guildId), raw => {
-        const arr = JSON.parse(raw) as unknown;
-        if (!Array.isArray(arr)) throw new Error('audit.json is not an array');
-        return (arr as Partial<AuditEntry>[]).map(normaliseAudit);
-    }) ?? [];
-}
-
-function writeAudit(guildId: string, entries: AuditEntry[]): void {
-    writeFileAtomic(auditFile(guildId), JSON.stringify(entries, null, 2));
-}
-
-function normalisePollAnswer(raw: Partial<PollRunAnswer>): PollRunAnswer {
-    return {
-        game:     raw.game ?? '',
-        answerId: typeof raw.answerId === 'number' ? raw.answerId : 0,
-        votes:    typeof raw.votes === 'number' ? raw.votes : 0,
-        voters:   Array.isArray(raw.voters) ? raw.voters.filter(v => typeof v === 'string') : [],
-    };
-}
-
-function normalisePollRun(raw: Partial<PollRun>): PollRun {
-    return {
-        id:         raw.id ?? randomUUID(),
-        messageId:  raw.messageId ?? '',
-        channelId:  raw.channelId ?? '',
-        postedAt:   raw.postedAt ?? new Date(0).toISOString(),
-        closesAt:   raw.closesAt ?? new Date(0).toISOString(),
-        recordedAt: raw.recordedAt,
-        abandoned:  raw.abandoned ?? false,
-        answers:    Array.isArray(raw.answers) ? raw.answers.map(normalisePollAnswer) : [],
-        winners:    Array.isArray(raw.winners) ? raw.winners.filter(w => typeof w === 'string') : [],
-    };
-}
-
-// Never seeds a missing file: the dashboard reads storage from a read-only mount, so a guild
-// that predates polls.json must not trigger a write on read.
-function readPolls(guildId: string): PollRun[] {
-    return readJsonFile(pollsFile(guildId), raw => {
-        const arr = JSON.parse(raw) as unknown;
-        if (!Array.isArray(arr)) throw new Error('polls.json is not an array');
-        return (arr as Partial<PollRun>[]).map(normalisePollRun);
-    }) ?? [];
-}
-
-function writePolls(guildId: string, runs: PollRun[]): void {
-    writeFileAtomic(pollsFile(guildId), JSON.stringify(runs, null, 2));
+    const rows = openGuildDb(guildId).prepare('SELECT * FROM game_groups').all() as GroupRow[];
+    return rows.map(toGroup).sort(byName);
 }
 
 // Call once at boot before init-ing guilds.
 export function initStorage(): void {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    console.log('Storage initialised.');
 }
 
-// Seeds a guild's data directory: empty games/groups and a default config.
-// Back-fills newly added default keys into an existing config. Safe to re-run.
-export function initGuildStorage(guildId: string): void {
-    fs.mkdirSync(guildDir(guildId), { recursive: true });
+export interface GuildStorageInit {
+    imported:     ImportSummary | null;
+    importError?: unknown;
+}
 
-    if (!fs.existsSync(gamesFile(guildId))) {
-        writeGames(guildId, []);
+// Returns import failures rather than throwing, so one guild's bad file cannot stop the others.
+export function initGuildStorage(guildId: string): GuildStorageInit {
+    const db     = openGuildDb(guildId);
+    const result: GuildStorageInit = { imported: null };
+
+    try {
+        result.imported = importLegacyJson(guildId);
+        clearAlert(guildId, ALERT_LEGACY_IMPORT);
+    } catch (err) {
+        result.importError = err;
+        saveAlert(guildId, {
+            key:     ALERT_LEGACY_IMPORT,
+            scope:   'storage',
+            message: 'I could not import this server\'s old data files, so its games and settings are missing. The files are untouched, and I will try again on my next restart.',
+            detail:  err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        });
     }
 
-    if (!fs.existsSync(groupsFile(guildId))) {
-        writeGroups(guildId, []);
-    }
-
-    if (!fs.existsSync(configFile(guildId))) {
-        writeConfig(guildId, { ...CONFIG_DEFAULTS });
-    } else {
-        const config  = readConfig(guildId);
-        let   changed = false;
-        for (const [k, v] of Object.entries(CONFIG_DEFAULTS)) {
-            if (!(k in config)) { config[k] = v; changed = true; }
-        }
-        if (changed) writeConfig(guildId, config);
-    }
+    const seed = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
+    for (const [key, value] of Object.entries(CONFIG_DEFAULTS)) seed.run(key, value);
+    return result;
 }
 
 // Removes a guild's entire data directory, so leaving a server takes its data with it.
 export function purgeGuildStorage(guildId: string): void {
+    closeGuildDb(guildId);
     fs.rmSync(guildDir(guildId), { recursive: true, force: true });
+}
+
+export function getMeta(guildId: string, key: string): string | undefined {
+    const row = openGuildDb(guildId).prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value;
+}
+
+export function setMeta(guildId: string, key: string, value: string): void {
+    openGuildDb(guildId).prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 }
 
 // Throws if the name is empty, too long, or already taken. Call before touching Discord.
@@ -316,42 +129,39 @@ export function validateGameName(guildId: string, name: string): void {
     if (trimmed.length > MAX_GAME_NAME_LENGTH) {
         throw new Error(`"${trimmed}" is too long (max ${MAX_GAME_NAME_LENGTH} characters).`);
     }
-    if (readGames(guildId).some(g => g.name.toLowerCase() === trimmed.toLowerCase())) {
+    if (getGameByName(guildId, trimmed)) {
         throw new Error(`"${trimmed}" is already in the roster.`);
     }
 }
 
 export function saveNewGame(guildId: string, game: Game): void {
-    const games = readGames(guildId);
-    games.push(game);
-    games.sort((a, b) => a.name.localeCompare(b.name));
-    writeGames(guildId, games);
+    insertGame(openGuildDb(guildId), game);
 }
 
-// Re-sorts on write, so a patch that renames the game leaves the file in name order.
 export function updateGame(guildId: string, name: string, patch: Partial<Game>): void {
-    const games = readGames(guildId);
-    const game  = games.find(g => g.name.toLowerCase() === name.toLowerCase());
+    const game = getGameByName(guildId, name);
     if (!game) return;
-    Object.assign(game, patch);
-    games.sort((a, b) => a.name.localeCompare(b.name));
-    writeGames(guildId, games);
+
+    const next = { ...game, ...patch };
+    openGuildDb(guildId).prepare(`
+        UPDATE games
+        SET name = ?, added_by = ?, added_at = ?, group_name = ?, player_count = ?, last_polled_at = ?, poll_appearances = ?, poll_wins = ?
+        WHERE name = ?
+    `).run(next.name, next.addedBy, next.addedAt, next.group, next.playerCount, next.lastPolledAt ?? null, next.pollAppearances, next.pollWins, game.name);
 }
 
 export function deleteGame(guildId: string, name: string): number {
-    const games    = readGames(guildId);
-    const filtered = games.filter(g => g.name.toLowerCase() !== name.toLowerCase());
-    const removed  = games.length - filtered.length;
-    if (removed > 0) writeGames(guildId, filtered);
-    return removed;
+    return openGuildDb(guildId).prepare('DELETE FROM games WHERE name = ?').run(name).changes;
 }
 
 export function getGameByName(guildId: string, name: string): Game | undefined {
-    return readGames(guildId).find(g => g.name.toLowerCase() === name.toLowerCase());
+    const row = openGuildDb(guildId).prepare('SELECT * FROM games WHERE name = ?').get(name) as GameRow | undefined;
+    return row && toGame(row);
 }
 
 export function getGamesInGroup(guildId: string, groupName: string): Game[] {
-    return readGames(guildId).filter(g => g.group.toLowerCase() === groupName.toLowerCase());
+    const rows = openGuildDb(guildId).prepare('SELECT * FROM games WHERE group_name = ?').all(groupName) as GameRow[];
+    return rows.map(toGame).sort(byName);
 }
 
 export function listGames(guildId: string): Game[] {
@@ -403,11 +213,13 @@ function pollWeight(game: Game, now: number): number {
 }
 
 export function gameCount(guildId: string): number {
-    return readGames(guildId).length;
+    const row = openGuildDb(guildId).prepare('SELECT COUNT(*) AS n FROM games').get() as { n: number };
+    return row.n;
 }
 
 export function getGroupByName(guildId: string, name: string): Group | undefined {
-    return readGroups(guildId).find(g => g.name.toLowerCase() === name.toLowerCase());
+    const row = openGuildDb(guildId).prepare('SELECT * FROM game_groups WHERE name = ?').get(name) as GroupRow | undefined;
+    return row && toGroup(row);
 }
 
 // Every group, quarantined ones included.
@@ -425,48 +237,31 @@ export function getActiveGroups(guildId: string): Group[] {
 }
 
 export function saveGroup(guildId: string, group: Group): void {
-    const groups = readGroups(guildId);
-    const idx    = groups.findIndex(g => g.name.toLowerCase() === group.name.toLowerCase());
-    if (idx >= 0) groups[idx] = group;
-    else          groups.push(group);
-    groups.sort((a, b) => a.name.localeCompare(b.name));
-    writeGroups(guildId, groups);
+    const db = openGuildDb(guildId);
+    db.transaction(() => {
+        db.prepare('DELETE FROM game_groups WHERE name = ?').run(group.name);
+        insertGroup(db, group);
+    })();
 }
 
-/**
- * Renames a group and re-points every game that sits in it.
- *
- * @param from Current group name, matched case-insensitively.
- * @param to   New name, stored as given.
- * @returns The number of games moved onto the new name. Does nothing if the group is unknown.
- */
 export function renameGroup(guildId: string, from: string, to: string): number {
-    const groups = readGroups(guildId);
-    const group  = groups.find(g => g.name.toLowerCase() === from.toLowerCase());
-    if (!group) return 0;
-
-    group.name = to;
-    groups.sort((a, b) => a.name.localeCompare(b.name));
-    writeGroups(guildId, groups);
-
-    const games   = readGames(guildId);
-    let   touched = 0;
-    for (const game of games) {
-        if (game.group.toLowerCase() === from.toLowerCase()) {
-            game.group = to;
-            touched   += 1;
-        }
-    }
-    if (touched > 0) writeGames(guildId, games);
-    return touched;
+    const db = openGuildDb(guildId);
+    return db.transaction(() => {
+        const renamed = db.prepare('UPDATE game_groups SET name = ? WHERE name = ?').run(to, from);
+        if (renamed.changes === 0) return 0;
+        return db.prepare('UPDATE games SET group_name = ? WHERE group_name = ?').run(to, from).changes;
+    })();
 }
 
 export function updateGroup(guildId: string, name: string, patch: Partial<Group>): void {
-    const groups = readGroups(guildId);
-    const group  = groups.find(g => g.name.toLowerCase() === name.toLowerCase());
+    const group = getGroupByName(guildId, name);
     if (!group) return;
-    Object.assign(group, patch);
-    writeGroups(guildId, groups);
+
+    openGuildDb(guildId).prepare(`
+        UPDATE game_groups
+        SET name = ?, role_id = ?, role_name = ?, role_colour = ?, category_id = ?, text_channel_id = ?, voice_channel_id = ?, quarantined = ?, quarantined_at = ?, adopted = ?
+        WHERE name = ?
+    `).run(...groupParams({ ...group, ...patch }), group.name);
 }
 
 /**
@@ -478,55 +273,44 @@ export function updateGroup(guildId: string, name: string, patch: Partial<Group>
  *          rather than duplicated, so a failure that repeats every restart stays one entry.
  */
 export function saveAlert(guildId: string, alert: { key: string; scope: string; message: string; detail?: string }): void {
-    const alerts   = readAlerts(guildId);
-    const existing = alerts.find(a => a.key === alert.key);
-    const now      = new Date().toISOString();
+    const now = new Date().toISOString();
+    const db  = openGuildDb(guildId);
 
-    if (existing) {
-        existing.scope   = alert.scope;
-        existing.message = alert.message;
-        existing.detail  = alert.detail ?? '';
-        existing.lastAt  = now;
-        existing.count  += 1;
-    } else {
-        alerts.push({
-            id:      randomUUID(),
-            key:     alert.key,
-            scope:   alert.scope,
-            message: alert.message,
-            detail:  alert.detail ?? '',
-            firstAt: now,
-            lastAt:  now,
-            count:   1,
-        });
-    }
+    db.transaction(() => {
+        db.prepare(`
+            INSERT INTO alerts (id, key, scope, message, detail, first_at, last_at, count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT (key) DO UPDATE SET
+                scope   = excluded.scope,
+                message = excluded.message,
+                detail  = excluded.detail,
+                last_at = excluded.last_at,
+                count   = count + 1
+        `).run(randomUUID(), alert.key, alert.scope, alert.message, alert.detail ?? '', now, now);
 
-    writeAlerts(guildId, alerts.slice(-MAX_ALERTS));
+        db.prepare('DELETE FROM alerts WHERE rowid NOT IN (SELECT rowid FROM alerts ORDER BY rowid DESC LIMIT ?)').run(MAX_ALERTS);
+    })();
 }
 
 // Call once the condition behind the alert works again.
 export function clearAlert(guildId: string, key: string): void {
-    const alerts = readAlerts(guildId);
-    const kept   = alerts.filter(a => a.key !== key);
-    if (kept.length !== alerts.length) writeAlerts(guildId, kept);
+    openGuildDb(guildId).prepare('DELETE FROM alerts WHERE key = ?').run(key);
 }
 
 // Returns false if the alert was already gone.
 export function dismissAlert(guildId: string, id: string): boolean {
-    const alerts = readAlerts(guildId);
-    const kept   = alerts.filter(a => a.id !== id);
-    if (kept.length === alerts.length) return false;
-    writeAlerts(guildId, kept);
-    return true;
+    return openGuildDb(guildId).prepare('DELETE FROM alerts WHERE id = ?').run(id).changes > 0;
 }
 
 // Outstanding alerts, most recent first. Empty for a guild that has never raised one.
 export function listAlerts(guildId: string): Alert[] {
-    return readAlerts(guildId).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+    const rows = openGuildDb(guildId).prepare('SELECT * FROM alerts ORDER BY last_at DESC, rowid DESC').all() as AlertRow[];
+    return rows.map(toAlert);
 }
 
 export function alertCount(guildId: string): number {
-    return readAlerts(guildId).length;
+    const row = openGuildDb(guildId).prepare('SELECT COUNT(*) AS n FROM alerts').get() as { n: number };
+    return row.n;
 }
 
 /**
@@ -537,12 +321,15 @@ export function alertCount(guildId: string): number {
  *          over-long `detail` is stored truncated.
  */
 export function saveAudit(guildId: string, entry: Omit<AuditEntry, 'id' | 'at'>): void {
-    const entries = readAudit(guildId);
-    const detail  = entry.detail.length > MAX_AUDIT_DETAIL
+    const db     = openGuildDb(guildId);
+    const detail = entry.detail.length > MAX_AUDIT_DETAIL
         ? `${entry.detail.slice(0, MAX_AUDIT_DETAIL)}...`
         : entry.detail;
-    entries.push({ ...entry, detail, id: randomUUID(), at: new Date().toISOString() });
-    writeAudit(guildId, entries.slice(-MAX_AUDIT));
+
+    db.transaction(() => {
+        insertAudit(db, { ...entry, detail, id: randomUUID(), at: new Date().toISOString() });
+        db.prepare('DELETE FROM audit WHERE rowid NOT IN (SELECT rowid FROM audit ORDER BY rowid DESC LIMIT ?)').run(MAX_AUDIT);
+    })();
 }
 
 /**
@@ -552,55 +339,74 @@ export function saveAudit(guildId: string, entry: Omit<AuditEntry, 'id' | 'at'>)
  * @returns An empty list for a guild that has never recorded one.
  */
 export function listAudit(guildId: string, limit?: number): AuditEntry[] {
-    const entries = readAudit(guildId).sort((a, b) => b.at.localeCompare(a.at));
-    return limit === undefined ? entries : entries.slice(0, limit);
+    const rows = openGuildDb(guildId).prepare('SELECT * FROM audit ORDER BY at DESC, rowid DESC').all() as AuditRow[];
+    const list = rows.map(toAudit);
+    return limit === undefined ? list : list.slice(0, limit);
 }
 
 export function savePollRun(guildId: string, run: Omit<PollRun, 'id'>): string {
-    const runs = readPolls(guildId);
-    const id   = randomUUID();
-    runs.push(normalisePollRun({ ...run, id }));
-    writePolls(guildId, runs.slice(-MAX_POLLS));
+    const db = openGuildDb(guildId);
+    const id = randomUUID();
+    db.transaction(() => insertPollRun(db, { ...run, id }))();
     return id;
+}
+
+function readRun(guildId: string, id: string): PollRun | undefined {
+    const db  = openGuildDb(guildId);
+    const row = db.prepare('SELECT * FROM polls WHERE id = ?').get(id) as PollRow | undefined;
+    return row && toPollRuns(db, [row])[0];
 }
 
 // Runs still waiting on their results, oldest first. Empty for a guild that has never polled.
 export function listOpenPollRuns(guildId: string): PollRun[] {
-    return readPolls(guildId).filter(r => !r.recordedAt);
+    const db   = openGuildDb(guildId);
+    const rows = db.prepare('SELECT * FROM polls WHERE recorded_at IS NULL ORDER BY posted_at, rowid').all() as PollRow[];
+    return toPollRuns(db, rows);
 }
 
-/**
- * Settles an open run with the vote counts read back from Discord.
- *
- * @param answers Vote counts, matched to the run's stored answers by game name.
- * @param winners Games tied at the top. Each has its lifetime `pollWins` incremented.
- * @returns Nothing. Does nothing if the run is unknown or already settled, so a sweep that
- *          runs twice over the same poll cannot double-count a win.
- */
-export function recordPollOutcome(guildId: string, id: string, answers: PollRunAnswer[], winners: string[]): void {
-    const runs = readPolls(guildId);
-    const run  = runs.find(r => r.id === id);
-    if (!run || run.recordedAt) return;
+export function recordPollOutcome(guildId: string, id: string, answers: PollRunAnswer[], winners: string[]): boolean {
+    const db = openGuildDb(guildId);
+    return db.transaction(() => {
+        const settled = db.prepare('UPDATE polls SET recorded_at = ? WHERE id = ? AND recorded_at IS NULL').run(new Date().toISOString(), id);
+        if (settled.changes === 0) return false;
 
-    run.answers    = answers.map(normalisePollAnswer);
-    run.winners    = winners;
-    run.recordedAt = new Date().toISOString();
-    writePolls(guildId, runs);
+        replacePollAnswers(db, id, answers, winners);
+        const addWin = db.prepare('UPDATE games SET poll_wins = poll_wins + 1 WHERE name = ?');
+        for (const name of winners) addWin.run(name);
+        return true;
+    })();
+}
 
-    for (const name of winners) {
-        const game = getGameByName(guildId, name);
-        if (game) updateGame(guildId, name, { pollWins: game.pollWins + 1 });
-    }
+function resultKey(answers: PollRunAnswer[], winners: string[]): string {
+    return JSON.stringify({
+        answers: [...answers].sort((a, b) => a.answerId - b.answerId).map(a => [a.answerId, a.votes, [...a.voters].sort()]),
+        winners: [...winners].sort(),
+    });
+}
+
+export function correctPollOutcome(guildId: string, id: string, answers: PollRunAnswer[], winners: string[]): boolean {
+    const db = openGuildDb(guildId);
+    return db.transaction(() => {
+        const run = readRun(guildId, id);
+        if (!run?.recordedAt) return false;
+        if (!run.abandoned && resultKey(run.answers, run.winners) === resultKey(answers, winners)) return false;
+
+        replacePollAnswers(db, id, answers, winners);
+        db.prepare('UPDATE polls SET abandoned = 0 WHERE id = ?').run(id);
+
+        const addWin  = db.prepare('UPDATE games SET poll_wins = poll_wins + 1 WHERE name = ?');
+        const loseWin = db.prepare('UPDATE games SET poll_wins = MAX(poll_wins - 1, 0) WHERE name = ?');
+        for (const name of winners)     if (!run.winners.includes(name)) addWin.run(name);
+        for (const name of run.winners) if (!winners.includes(name))     loseWin.run(name);
+        return true;
+    })();
 }
 
 // Closes an open run without results, so an unreadable poll is not retried forever.
 export function abandonPollRun(guildId: string, id: string): void {
-    const runs = readPolls(guildId);
-    const run  = runs.find(r => r.id === id);
-    if (!run || run.recordedAt) return;
-    run.abandoned  = true;
-    run.recordedAt = new Date().toISOString();
-    writePolls(guildId, runs);
+    openGuildDb(guildId)
+        .prepare('UPDATE polls SET abandoned = 1, recorded_at = ? WHERE id = ? AND recorded_at IS NULL')
+        .run(new Date().toISOString(), id);
 }
 
 /**
@@ -610,19 +416,32 @@ export function abandonPollRun(guildId: string, id: string): void {
  * @returns Abandoned runs are left out, so callers never show a poll whose votes were lost.
  */
 export function listPollRuns(guildId: string, limit?: number): PollRun[] {
-    const runs = readPolls(guildId)
-        .filter(r => r.recordedAt && !r.abandoned)
-        .sort((a, b) => b.postedAt.localeCompare(a.postedAt));
-    return limit === undefined ? runs : runs.slice(0, limit);
+    const db   = openGuildDb(guildId);
+    const rows = db.prepare(`
+        SELECT * FROM polls
+        WHERE recorded_at IS NOT NULL AND abandoned = 0
+        ORDER BY posted_at DESC, rowid DESC
+        LIMIT ?
+    `).all(limit ?? -1) as PollRow[];
+    return toPollRuns(db, rows);
+}
+
+export function listSettledPollRuns(guildId: string): PollRun[] {
+    const db   = openGuildDb(guildId);
+    const rows = db.prepare('SELECT * FROM polls WHERE recorded_at IS NOT NULL ORDER BY posted_at DESC, rowid DESC').all() as PollRow[];
+    return toPollRuns(db, rows);
+}
+
+export function listPollMessageIds(guildId: string): Set<string> {
+    const rows = openGuildDb(guildId).prepare('SELECT message_id FROM polls').all() as { message_id: string }[];
+    return new Set(rows.map(r => r.message_id));
 }
 
 export function getConfig(guildId: string, key: string): string {
-    const config = readConfig(guildId);
-    return key in config ? config[key] : (CONFIG_DEFAULTS[key] ?? '');
+    const row = openGuildDb(guildId).prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value ?? CONFIG_DEFAULTS[key] ?? '';
 }
 
 export function setConfig(guildId: string, key: string, value: string | number): void {
-    const config = readConfig(guildId);
-    config[key]  = String(value);
-    writeConfig(guildId, config);
+    openGuildDb(guildId).prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run(key, String(value));
 }

@@ -1,16 +1,17 @@
-FROM node:20.18.1-alpine AS build
+FROM node:22.19.0-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/bot/package.json apps/bot/
 COPY apps/web/package.json apps/web/
-RUN npm ci
+# better-sqlite3 bundles its binaries, so skip npm's compile step.
+RUN npm ci --ignore-scripts
 COPY packages/shared ./packages/shared
 COPY apps/bot ./apps/bot
 RUN npm run build:shared && npm run build:bot
 
-FROM node:20.18.1-alpine AS runtime
+FROM node:22.19.0-alpine AS runtime
 
 ENV NODE_ENV=production \
     NODE_PATH=/app/apps/bot/dist \
@@ -23,7 +24,7 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/bot/package.json apps/bot/
 COPY apps/web/package.json apps/web/
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/apps/bot/dist ./apps/bot/dist
 
