@@ -8,6 +8,11 @@ services:
     image: thecultbot:latest
     restart: unless-stopped
     init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
       CLIENT_ID: ${CLIENT_ID:?set CLIENT_ID}
@@ -29,6 +34,11 @@ services:
     image: thecultweb:latest
     restart: unless-stopped
     init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
     depends_on:
       - cultbot
     environment:

@@ -99,11 +99,16 @@ async function settleRun(client: Client, guildId: string, run: PollRun, overdue:
 
     const poll = message.poll;
     if (!poll.resultsFinalized && overdue < FINALISE_GRACE_MS) {
-        log.debug('Poll results not final yet, will retry', { guild: guildId, run: run.id });
+        log.info('Poll results not final yet, will retry', { guild: guildId, run: run.id, overdueMinutes: Math.round(overdue / 60_000) });
         return false;
+    }
+    if (!poll.resultsFinalized) {
+        log.warn('Poll results never finalised, recording what Discord returned', { guild: guildId, run: run.id });
     }
 
     const answers = await readAnswers(guildId, run.id, run.answers, poll);
+    warnIfCountsDisagree(guildId, run.id, answers);
+
     const winners = winnersOf(answers);
     const settled = recordPollOutcome(guildId, run.id, answers, winners);
     log.info('Poll settled', { guild: guildId, run: run.id, kind: run.kind, winners, top: topVotes(answers), finalised: poll.resultsFinalized });
@@ -123,6 +128,17 @@ async function readAnswers(guildId: string, runId: string, stored: PollRunAnswer
         });
     }
     return answers;
+}
+
+// More voters than votes means a stale reading, which otherwise looks like no votes.
+function warnIfCountsDisagree(guildId: string, runId: string, answers: PollRunAnswer[]): void {
+    const wrong = answers.filter(a => a.voters.length > a.votes);
+    if (wrong.length === 0) return;
+    log.warn('Vote counts are lower than the voter lists', {
+        guild:   guildId,
+        run:     runId,
+        answers: wrong.map(a => `${a.game}: ${a.votes} counted, ${a.voters.length} named`).join('; '),
+    });
 }
 
 function topVotes(answers: PollRunAnswer[]): number {

@@ -131,8 +131,10 @@ export function buildInternalApi(client: Client, secret: string): FastifyInstanc
             actorId: req.actor?.id,
             reason:  req.failure ?? undefined,
         };
-        if (req.method === 'GET' && reply.statusCode < 400) log.debug('Request', fields);
-        else                                                log.info('Request', fields);
+        // A read sent as a POST, and every dashboard page calls it.
+        const isRead = req.method === 'GET' || req.url === '/internal/manageable-guilds';
+        if (isRead && reply.statusCode < 400) log.debug('Request', fields);
+        else                                  log.info('Request', fields);
     });
 
     app.get('/internal/health', async () => ({ ok: true }));

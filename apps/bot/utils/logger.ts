@@ -8,6 +8,10 @@
  * LOG_LEVEL (debug | info | warn | error) sets the threshold and defaults to info.
  */
 
+import fs   from 'fs';
+import path from 'path';
+import { DATA_DIR } from '@thecult/shared';
+
 type Level  = 'debug' | 'info' | 'warn' | 'error';
 type Fields = Record<string, unknown>;
 
@@ -41,6 +45,34 @@ function stackOf(fields?: Fields): string {
     return err?.stack ? `\n${err.stack}` : '';
 }
 
+const LOG_DIR        = path.join(DATA_DIR, 'logs');
+const RETENTION_DAYS = 14;
+
+let currentDay = '';
+
+function pruneOldLogs(today: string): void {
+    const cutoff = new Date(Date.parse(today) - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    for (const name of fs.readdirSync(LOG_DIR)) {
+        const day = /^bot-(\d{4}-\d{2}-\d{2})\.log$/.exec(name)?.[1];
+        if (day && day < cutoff) fs.rmSync(path.join(LOG_DIR, name), { force: true });
+    }
+}
+
+// A log failure must never take the bot down.
+function appendToFile(text: string): void {
+    try {
+        const today = text.slice(0, 10);
+        if (today !== currentDay) {
+            fs.mkdirSync(LOG_DIR, { recursive: true });
+            pruneOldLogs(today);
+            currentDay = today;
+        }
+        fs.appendFileSync(path.join(LOG_DIR, `bot-${today}.log`), text);
+    } catch (err) {
+        process.stderr.write(`Could not write the log file: ${String(err)}\n`);
+    }
+}
+
 export interface Logger {
     debug(message: string, fields?: Fields): void;
     info(message: string, fields?: Fields): void;
@@ -59,8 +91,10 @@ export function logger(scope: string): Logger {
     const emit = (level: Level, message: string, fields?: Fields): void => {
         if (ORDER[level] < threshold) return;
         const line = format(level, scope, message, fields);
-        if (level === 'error') process.stderr.write(`${line}${stackOf(fields)}\n`);
-        else                   process.stdout.write(`${line}\n`);
+        const text = level === 'error' ? `${line}${stackOf(fields)}\n` : `${line}\n`;
+        if (level === 'error') process.stderr.write(text);
+        else                   process.stdout.write(text);
+        appendToFile(text);
     };
 
     return {
