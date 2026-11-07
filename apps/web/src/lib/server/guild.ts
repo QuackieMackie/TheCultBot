@@ -1,31 +1,6 @@
-/**
- * The guild dashboard's form actions and config helpers, shared by every route under
- * `/g/[guildId]`. Each route re-exports the subset its components post to.
- */
-
 import { error, fail } from '@sveltejs/kit';
-import { getConfig } from '@thecult/shared';
 import { bot } from '$lib/server/bot';
 import type { Action } from '@sveltejs/kit';
-
-export const CONFIG_KEYS = [
-    'poll_size',
-    'poll_channel_id',
-    'manager_role_id',
-    'poll_hour_utc',
-    'poll_duration_hours',
-    'poll_auto_enabled',
-    'poll_message',
-    'role_board_channel_id',
-    'role_board_message_id'
-] as const;
-
-/** Every config key for a guild, with unset keys as empty strings. */
-export function configSnapshot(guildId: string): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const k of CONFIG_KEYS) out[k] = getConfig(guildId, k);
-    return out;
-}
 
 /**
  * Returns the signed-in user's id.

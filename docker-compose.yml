@@ -42,9 +42,6 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       INTERNAL_API_URL: http://cultbot:8081
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
-      CULTBOT_DATA_DIR: /app/data
-    volumes:
-      - /srv/containers/docker/thecults/discord:/app/data:ro
     ports:
       - "127.0.0.1:3000:3000"
     networks:

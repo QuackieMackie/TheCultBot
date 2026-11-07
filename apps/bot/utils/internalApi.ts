@@ -1,6 +1,6 @@
-import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
+import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Client, ChannelType, DiscordAPIError, Guild, GuildMember, HTTPError } from 'discord.js';
-import { listGames, getActiveGroups, listAlerts, alertCount, dismissAlert } from '@thecult/shared';
+import { listGames, listGroups, getActiveGroups, listAlerts, listAudit, listPollRuns, alertCount, dismissAlert } from '@thecult/shared';
 import { hasManagerAccess } from 'utils/permissions';
 import { applyConfigChange, readConfigSnapshot } from 'utils/configService';
 import { addGame, editGame, editGroup, importGame, removeGame } from 'utils/gameService';
@@ -78,6 +78,11 @@ function fail(reply: FastifyReply, err: unknown): FastifyReply {
     return reply.code(status).send({ error: message });
 }
 
+function limitOf(req: FastifyRequest): number | undefined {
+    const limit = Number((req.query as { limit?: string }).limit);
+    return Number.isInteger(limit) && limit > 0 ? limit : undefined;
+}
+
 export async function startInternalApi(client: Client): Promise<void> {
     const secret = process.env.INTERNAL_API_SECRET;
     const port   = parseInt(process.env.INTERNAL_API_PORT || '8081', 10);
@@ -87,6 +92,11 @@ export async function startInternalApi(client: Client): Promise<void> {
         return;
     }
 
+    await buildInternalApi(client, secret).listen({ port, host: '0.0.0.0' });
+    log.info('Internal API listening', { port });
+}
+
+export function buildInternalApi(client: Client, secret: string): FastifyInstance {
     const app = Fastify({ logger: false });
 
     app.decorateRequest('actor',   null);
@@ -197,6 +207,36 @@ export async function startInternalApi(client: Client): Promise<void> {
         try {
             await fetchGuild(client, id);
             return { games: listGames(id), activeGroups: getActiveGroups(id) };
+        } catch (err) {
+            return fail(reply, err);
+        }
+    });
+
+    app.get('/internal/guilds/:id/groups', async (req, reply) => {
+        const { id } = req.params as { id: string };
+        try {
+            await fetchGuild(client, id);
+            return listGroups(id);
+        } catch (err) {
+            return fail(reply, err);
+        }
+    });
+
+    app.get('/internal/guilds/:id/audit', async (req, reply) => {
+        const { id } = req.params as { id: string };
+        try {
+            await fetchGuild(client, id);
+            return listAudit(id, limitOf(req));
+        } catch (err) {
+            return fail(reply, err);
+        }
+    });
+
+    app.get('/internal/guilds/:id/polls', async (req, reply) => {
+        const { id } = req.params as { id: string };
+        try {
+            await fetchGuild(client, id);
+            return listPollRuns(id, limitOf(req));
         } catch (err) {
             return fail(reply, err);
         }
@@ -362,6 +402,5 @@ export async function startInternalApi(client: Client): Promise<void> {
         }
     });
 
-    await app.listen({ port, host: '0.0.0.0' });
-    log.info('Internal API listening', { port });
+    return app;
 }

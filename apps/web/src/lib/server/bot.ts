@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import type { Alert, AuditEntry, Game, Group, PollRun } from '@thecult/shared';
 import type { GuildSummary, ChannelSummary, RoleSummary } from '$lib/types';
 
 export type { GuildSummary, ChannelSummary, RoleSummary } from '$lib/types';
@@ -22,9 +23,25 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     return data as T;
 }
 
-// Thin client over the bot's internal API. All Discord side-effects and every write live
-// behind these calls; the bot re-checks the acting user's permission on each one.
 export const bot = {
+    config: (guildId: string) =>
+        call<Record<string, string>>(`/internal/guilds/${guildId}/config`),
+
+    games: (guildId: string) =>
+        call<{ games: Game[]; activeGroups: Group[] }>(`/internal/guilds/${guildId}/games`),
+
+    groups: (guildId: string) =>
+        call<Group[]>(`/internal/guilds/${guildId}/groups`),
+
+    alerts: (guildId: string) =>
+        call<Alert[]>(`/internal/guilds/${guildId}/alerts`),
+
+    audit: (guildId: string, limit: number) =>
+        call<AuditEntry[]>(`/internal/guilds/${guildId}/audit?limit=${limit}`),
+
+    polls: (guildId: string, limit: number) =>
+        call<PollRun[]>(`/internal/guilds/${guildId}/polls?limit=${limit}`),
+
     manageableGuilds: (userId: string) =>
         call<GuildSummary[]>('/internal/manageable-guilds', { method: 'POST', body: JSON.stringify({ userId }) }),
 
