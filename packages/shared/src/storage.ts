@@ -556,14 +556,6 @@ export function listAudit(guildId: string, limit?: number): AuditEntry[] {
     return limit === undefined ? entries : entries.slice(0, limit);
 }
 
-/**
- * Records a poll the bot has just posted, so its results can be read once it closes.
- *
- * @param run Everything known at post time. `answers` maps each game to the answer id Discord
- *            assigned it, and `votes` stays 0 until the run is settled.
- * @returns The new run's id. The oldest runs are dropped past the cap; since runs are appended
- *          in order, an open run is always among the newest and can never be trimmed away.
- */
 export function savePollRun(guildId: string, run: Omit<PollRun, 'id'>): string {
     const runs = readPolls(guildId);
     const id   = randomUUID();
