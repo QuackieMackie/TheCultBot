@@ -8,15 +8,23 @@ import { logger } from 'utils/logger';
 
 const log = logger('scheduler');
 
+const DEFAULT_POLL_HOUR = 9;
+
 let pollTask:    ScheduledTask | null = null;
 let resultsTask: ScheduledTask | null = null;
+
+// 0 is a valid hour, so only NaN falls back.
+export function pollHourOf(raw: string): number {
+    const hour = parseInt(raw, 10);
+    return Number.isNaN(hour) ? DEFAULT_POLL_HOUR : hour;
+}
 
 export function startScheduler(client: Client): void {
     pollTask = cron.schedule('0 * * * 1', () => {
         const hour = new Date().getUTCHours();
         for (const guildId of client.guilds.cache.keys()) {
             if (getConfig(guildId, 'poll_auto_enabled') !== 'true') continue;
-            if ((parseInt(getConfig(guildId, 'poll_hour_utc'), 10) || 9) !== hour) continue;
+            if (pollHourOf(getConfig(guildId, 'poll_hour_utc')) !== hour) continue;
             log.info('Cron fired, running weekly poll', { guild: guildId, hour });
             runWeeklyPoll(client, guildId, { weighted: true })
                 .then(() => resolveAlert(guildId, ALERT_WEEKLY_POLL))
